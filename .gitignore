@@ -1,0 +1,30 @@
+# Environment
+.env
+*.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+frontend/dist/
+frontend/build/
+
+# Docker
+*.pid
+
+# Data / caches
+*.db
+*.sqlite3
+enrichment/cache/
+data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,24 @@
+discovery:
+  subdomain_enum: true
+  port_scan: true
+  scan_interval_hours: 24
+
+enrichment:
+  refresh_interval_hours: 24
+  sources:
+    - nvd
+    - kev
+    - epss
+    - osv
+
+scoring:
+  weights:
+    kev_status: 0.35
+    epss_score: 0.25
+    asset_criticality: 0.25
+    exposure_context: 0.15
+
+integrations:
+  slack_webhook_url: ""
+  jira:
+    enabled: false
