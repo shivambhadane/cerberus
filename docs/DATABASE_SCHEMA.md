@@ -1,6 +1,6 @@
 # Cerberus — Database Schema
 
-**Store:** PostgreSQL (primary), Redis (cache/queue only — not modeled here)
+**Store:** PostgreSQL in production; SQLite for local development (same models, see §5).
 
 ## 1. Design rationale
 
@@ -31,6 +31,7 @@ erDiagram
         uuid tenant_id FK
         text target_domain
         text status
+        text error
         timestamptz started_at
         timestamptz completed_at
     }
@@ -63,7 +64,16 @@ erDiagram
         date kev_date_added
         float epss_score
         boolean has_public_exploit
+        text vendor
+        text product
+        text description
         timestamptz last_refreshed_at
+    }
+
+    SOURCE_REFRESH {
+        text name PK
+        timestamptz last_refreshed_at
+        int record_count
     }
 
     FINDINGS {
@@ -97,6 +107,7 @@ One row per pipeline run. Status tracks progress through discovery → ingestion
 | `tenant_id` | uuid, FK → tenants.id | |
 | `target_domain` | text | the domain passed to `cerberus scan --target` |
 | `status` | text | `pending` \| `discovering` \| `enriching` \| `scoring` \| `completed` \| `failed` |
+| `error` | text, nullable | failure reason when `status` is `failed` |
 | `started_at` | timestamptz | |
 | `completed_at` | timestamptz, nullable | |
 
@@ -112,7 +123,7 @@ One row per discovered `host:port` combination. Re-discovering the same asset up
 | `ip_address` | inet | |
 | `port` | int | |
 | `protocol` | text | `tcp` \| `udp` |
-| `technology` | text, nullable | e.g. `nginx/1.24`, from httpx fingerprinting |
+| `technology` | text, nullable | e.g. `nginx/1.24.0`, from HTTP `Server` header or service banner |
 | `first_seen_at` | timestamptz | |
 | `last_seen_at` | timestamptz | updated on every re-scan that still finds this asset |
 
@@ -139,7 +150,10 @@ Global cache, keyed by CVE ID — not tenant-scoped. Refreshed by `scripts/refre
 | `kev_listed` | boolean | from CISA KEV |
 | `kev_date_added` | date, nullable | |
 | `epss_score` | float | 0–1, from FIRST.org EPSS |
-| `has_public_exploit` | boolean | cross-referenced against Exploit-DB |
+| `has_public_exploit` | boolean | true when NVD tags a reference as `Exploit` |
+| `vendor` | text, nullable | from KEV `vendorProject`; used for display and KEV product matching |
+| `product` | text, nullable | from KEV `product`; used by the matcher's KEV fallback path |
+| `description` | text, nullable | CVE summary, from NVD or the KEV short description |
 | `last_refreshed_at` | timestamptz | |
 
 ### `findings`
@@ -157,8 +171,28 @@ The join between a specific asset and a specific CVE, carrying the computed risk
 
 Unique constraint: `(asset_id, cve_id)` — re-detecting the same CVE on the same asset updates the existing row rather than duplicating it.
 
+### `source_refresh`
+Records when each global enrichment source was last pulled. Backs `GET /api/v1/enrichment/status`.
+Only the scheduled global refresh writes here - per-scan EPSS backfills deliberately do not,
+so the timestamp always reflects a full refresh.
+
+| Column | Type | Notes |
+|---|---|---|
+| `name` | text, PK | `kev` \| `epss` \| `nvd` |
+| `last_refreshed_at` | timestamptz | |
+| `record_count` | int | rows pulled in that refresh |
+
 ## 4. Indexes (v1)
 
 - `findings (risk_score DESC)` — supports `GET /api/v1/findings?sort=risk_score`
 - `findings (cve_id)` — supports the join to `cve_enrichment`
 - `assets (tenant_id)`, `findings (asset_id)` — tenant/asset scoping on every list query
+
+## 5. Implementation notes
+
+- Models live in [core/models.py](../core/models.py); `python scripts/init_db.py` creates the schema.
+- UUID primary keys are stored as 36-character strings and IP addresses as strings, so the
+  same models run unchanged on PostgreSQL and on SQLite for local development.
+- CVE-to-asset matching does **not** store CPE applicability ranges. NVD applies affected-version
+  ranges server-side via `virtualMatchString`, so Cerberus queries it per detected technology
+  rather than maintaining its own version-range table.

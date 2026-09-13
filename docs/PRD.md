@@ -35,9 +35,9 @@ Full problem framing and architecture live in the [root README](../README.md); t
 ## 5. Features (v1 scope, mapped to pipeline stages)
 
 ### 5.1 Asset Discovery
-- Subdomain enumeration via subfinder + crt.sh
-- Port/service scan via nmap or masscan
-- Tech fingerprinting via httpx
+- Subdomain enumeration via crt.sh certificate transparency logs, plus `subfinder` when installed
+- Port/service scan via an async TCP connect scan (no external scanner required)
+- Technology fingerprinting from HTTP `Server` headers and raw service banners
 - **Acceptance:** given a domain, produces a deduplicated list of `host:port` assets with detected technologies.
 
 ### 5.2 Ingestion & Normalization
@@ -46,7 +46,8 @@ Full problem framing and architecture live in the [root README](../README.md); t
 - **Acceptance:** re-running a scan on an unchanged target does not create duplicate asset rows.
 
 ### 5.3 Enrichment
-- Pull and cache NVD, CISA KEV, EPSS, OSV data globally (not per-scan)
+- Pull and cache CISA KEV and EPSS globally (not per-scan); query NVD per detected technology
+- OSV is deferred until dependency scanning exists - it covers packages, not network services
 - Join enrichment data onto findings by CVE ID
 - **Acceptance:** a finding referencing a KEV-listed CVE is flagged `kev_listed: true` without a live lookup at scoring time.
 
@@ -80,7 +81,18 @@ Full problem framing and architecture live in the [root README](../README.md); t
 - End-to-end run against a lab/CTF-style target completes and produces a ranked top-10 list with reasoning.
 - A reviewer can read [README.md](../README.md) → [PRD.md](PRD.md) → [API.md](API.md) → [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) and understand the full system without reading code.
 
-## 9. Open Questions
+## 9. Resolved Design Questions
 
-- Which asset criticality tagging model ships first — manual tagging UI, or a naming-convention heuristic (e.g. `prod-*` vs `test-*`)?
-- Does v1 need scan history/diffing, or is each scan a fresh snapshot?
+- **Asset criticality tagging** — v1 ships the naming-convention heuristic
+  ([ingestion/criticality.py](../ingestion/criticality.py)): hostnames matching auth/payments
+  patterns score `critical`, production/data-tier patterns `high`, dev/test/staging `low`, and
+  exposed management or database ports raise an otherwise-unremarkable host to `high`. Manual
+  `asset_criticality` rows always win and are never overwritten by a re-scan, so the tagging UI
+  (Phase 3) becomes an override surface rather than a replacement.
+- **Scan history** — each scan is a snapshot, but assets and findings are upserted rather than
+  replaced: `first_seen_at` / `last_seen_at` track asset lifetime and a re-detected CVE updates
+  its existing finding. Diffing between scans is deferred to Phase 3.
+- **Technology-to-CVE matching** — Cerberus resolves a fingerprinted product to canonical CPE
+  vendor/product bases via the NVD CPE dictionary, then asks NVD for version-affected CVEs.
+  NVD applies the affected-version ranges, so Cerberus stores no version-range table of its own.
+  When no CPE resolves, it falls back to matching KEV product names.

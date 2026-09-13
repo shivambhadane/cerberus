@@ -2,4 +2,12 @@
 
 REST API — stage 5 delivery layer.
 
-Serves ranked findings and asset inventory to the dashboard, CLI, and integrations. See the [Usage](../README.md#usage) section of the root README for endpoint examples (`GET /api/v1/findings`, `GET /api/v1/findings/{finding_id}`).
+[main.py](main.py) is a FastAPI app serving ranked findings, asset inventory, scan control,
+and enrichment freshness. Every endpoint except `/healthz` requires
+`Authorization: Bearer $API_SECRET_KEY`.
+
+```bash
+uvicorn api.main:app --reload     # interactive docs at /docs
+```
+
+Full endpoint contracts: [docs/API.md](../docs/API.md).

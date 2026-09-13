@@ -1,5 +1,7 @@
 # frontend
 
-Dashboard (React/Next.js) — stage 5 delivery layer.
+Dashboard (React/Next.js) — **not yet implemented**, tracked as Phase 2 in
+[docs/ROADMAP.md](../docs/ROADMAP.md).
 
-Displays the ranked, explainable findings list served by `api/`: top exploitable exposures, per-asset detail, and criticality tagging.
+Will display the ranked, explainable findings served by `api/`. Until then, use the CLI
+(`python cerberus.py report --top 10`) or the API directly.

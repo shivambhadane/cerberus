@@ -2,6 +2,10 @@ discovery:
   subdomain_enum: true
   port_scan: true
   scan_interval_hours: 24
+  # Conservative defaults: see docs/RULES_OF_ENGAGEMENT.md before raising these.
+  max_concurrency: 50
+  connect_timeout: 2.0
+  ports: []          # empty = discovery.ports.DEFAULT_PORTS
 
 enrichment:
   refresh_interval_hours: 24
@@ -9,7 +13,6 @@ enrichment:
     - nvd
     - kev
     - epss
-    - osv
 
 scoring:
   weights:

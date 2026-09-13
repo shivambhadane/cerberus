@@ -1,5 +1,6 @@
 # integrations
 
-Slack, Jira, and webhook handlers — stage 5 delivery layer.
+Slack, Jira, and webhook handlers — **not yet implemented**, tracked as Phase 3 in
+[docs/ROADMAP.md](../docs/ROADMAP.md).
 
-Pushes high-risk findings out to the tools security teams already work in, configured under `integrations` in [config.yaml](../config.yaml).
+Configuration keys are reserved under `integrations` in [config.yaml](../config.yaml).

@@ -1,8 +1,13 @@
 # ingestion
 
-Normalization and deduplication workers — stage 2 of the pipeline.
+Normalization and deduplication — stage 2 of the pipeline.
 
-Takes raw output from `discovery/`, maps it onto the common asset/finding data model, deduplicates against previously seen assets, and persists it to Postgres.
+- [normalize.py](normalize.py) — upserts discovered assets, deduplicating on
+  `(tenant, hostname, port, protocol)` so a re-scan refreshes `last_seen_at`
+  instead of creating duplicate rows
+- [criticality.py](criticality.py) — infers asset criticality from hostname naming
+  conventions and exposed service ports. Manual `asset_criticality` rows always win
+  and are never overwritten by a re-scan.
 
-**Input:** raw discovery output
-**Output:** normalized asset and finding records in the shared database.
+**Input:** `DiscoveredAsset` records from `discovery/`
+**Output:** normalized `assets` rows in the shared database.

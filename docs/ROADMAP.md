@@ -15,19 +15,24 @@ Tracks what's actually built vs. planned, grouped by phase. See [PRD](PRD.md) fo
 
 Each item is a working slice, not just a stub — see [PRD §5](PRD.md#5-features-v1-scope-mapped-to-pipeline-stages) for acceptance criteria.
 
-- [ ] `discovery/`: subdomain enumeration (subfinder + crt.sh) + port scan (nmap) + tech fingerprinting (httpx) against a single target domain
-- [ ] `ingestion/`: normalize discovery output into the `assets` table, with dedupe on re-scan
-- [ ] `enrichment/`: `scripts/refresh_enrichment.py` pulling NVD + CISA KEV + EPSS into `cve_enrichment`
-- [ ] `scoring/`: weighted risk score + reasoning string, per [config.yaml](../config.yaml) weights
-- [ ] `api/`: `POST /api/v1/scans`, `GET /api/v1/findings`, `GET /api/v1/findings/{id}` wired to a real database
-- [ ] CLI: `cerberus scan --target <domain> --authorized` running the full pipeline end-to-end
+- [x] `discovery/`: subdomain enumeration (crt.sh, plus subfinder when installed) + async TCP port scan + technology fingerprinting from HTTP headers and service banners
+- [x] `ingestion/`: normalize discovery output into the `assets` table, with dedupe on re-scan and heuristic criticality tagging
+- [x] `enrichment/`: `scripts/refresh_enrichment.py` pulling CISA KEV + EPSS into `cve_enrichment`, and NVD CPE matching to turn a fingerprint into CVEs
+- [x] `scoring/`: weighted risk score + reasoning string, per [config.yaml](../config.yaml) weights
+- [x] `api/`: all documented endpoints wired to a real database, with bearer auth
+- [x] CLI: `cerberus.py scan --target <domain> --authorized` running the full pipeline end-to-end
+- [x] Test suite covering scoring, dedupe, criticality, matching, and the API
 
-**Exit criterion:** a single command against a lab/CTF target produces a ranked top-10 list with reasoning, matching the [PRD success metric](PRD.md#8-success-metrics-for-a-portfoliodemo-context).
+**Exit criterion — met.** A single command against a lab target produces a ranked top-10 list
+with reasoning. In a verification run against a local lab host presenting `Apache/2.4.49`,
+the top findings were `CVE-2021-41773` and `CVE-2021-42013` (KEV-listed path-traversal RCEs),
+and `CVE-2023-44487` at CVSS **7.5** outranked `CVE-2021-44790` at CVSS **9.8** because only the
+former is under active exploitation — the behaviour the whole product exists to produce.
 
 ## Phase 2 — Delivery & polish
 
 - [ ] Dashboard (`frontend/`): ranked findings list + per-asset detail view
-- [ ] `GET /api/v1/assets`, `GET /api/v1/enrichment/status`, `PATCH /api/v1/findings/{id}` (status updates)
+- [x] `GET /api/v1/assets`, `GET /api/v1/enrichment/status`, `PATCH /api/v1/findings/{id}` (status updates)
 - [ ] Deployment guide (beyond local `docker compose up`)
 - [ ] Demo script / one-pager for presenting the finished pipeline
 

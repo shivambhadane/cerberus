@@ -60,9 +60,12 @@ Check the status of a running or completed scan.
   "target_domain": "example.com",
   "status": "completed",
   "started_at": "2026-09-13T10:00:00Z",
-  "completed_at": "2026-09-13T10:04:12Z"
+  "completed_at": "2026-09-13T10:04:12Z",
+  "error": null
 }
 ```
+
+`error` carries the failure reason when `status` is `failed`, and is `null` otherwise.
 
 `status` is one of: `pending`, `discovering`, `enriching`, `scoring`, `completed`, `failed`.
 
@@ -127,20 +130,23 @@ The core endpoint: ranked, explainable findings. Matches [README usage example](
   "findings": [
     {
       "id": "f1e2d3c4-...",
-      "asset": "api.example.com",
-      "cve_id": "CVE-2023-XXXXX",
-      "cvss_score": 6.5,
+      "asset": "api.example.com:443",
+      "cve_id": "CVE-2021-41773",
+      "cvss_score": 9.8,
       "kev_listed": true,
-      "epss_score": 0.94,
+      "epss_score": 0.99992,
       "asset_criticality": "high",
-      "risk_score": 98,
+      "risk_score": 89.6,
       "status": "open",
-      "reasoning": "Actively exploited (CISA KEV), 94% predicted exploitation probability, affects a production-tagged, internet-facing asset.",
+      "reasoning": "Actively exploited (CISA KEV, added 2021-11-03); 100% predicted exploitation probability (EPSS); high-criticality asset (hostname indicates a production or data-tier system); internet-facing web service on port 443, critical severity (CVSS 9.8).",
       "detected_at": "2026-09-13T10:04:00Z"
     }
   ]
 }
 ```
+
+`asset` is rendered as `hostname:port`. Results are ordered by `risk_score` descending,
+with CVSS as the tie-breaker.
 
 ---
 
@@ -158,16 +164,17 @@ Full detail for a single finding, including enrichment source data.
     "hostname": "api.example.com",
     "port": 443
   },
-  "cve_id": "CVE-2023-XXXXX",
-  "cvss_score": 6.5,
+  "cve_id": "CVE-2021-41773",
+  "cvss_score": 9.8,
   "kev_listed": true,
-  "kev_date_added": "2023-11-01",
-  "epss_score": 0.94,
+  "kev_date_added": "2021-11-03",
+  "epss_score": 0.99992,
   "has_public_exploit": true,
   "asset_criticality": "high",
-  "risk_score": 98,
+  "risk_score": 89.6,
   "status": "open",
-  "reasoning": "Actively exploited (CISA KEV), 94% predicted exploitation probability, affects a production-tagged, internet-facing asset.",
+  "reasoning": "Actively exploited (CISA KEV, added 2021-11-03); 100% predicted exploitation probability (EPSS); high-criticality asset (hostname indicates a production or data-tier system); internet-facing web service on port 443, critical severity (CVSS 9.8).",
+  "description": "A flaw in Apache HTTP Server 2.4.49 allows path traversal...",
   "detected_at": "2026-09-13T10:04:00Z"
 }
 ```
@@ -199,10 +206,8 @@ Check when global enrichment sources were last refreshed. Useful for confirming 
 ```json
 {
   "sources": [
-    { "name": "nvd", "last_refreshed_at": "2026-09-13T00:00:00Z" },
-    { "name": "kev", "last_refreshed_at": "2026-09-13T00:00:00Z" },
-    { "name": "epss", "last_refreshed_at": "2026-09-13T00:00:00Z" },
-    { "name": "osv", "last_refreshed_at": "2026-09-12T00:00:00Z" }
+    { "name": "epss", "last_refreshed_at": "2026-09-13T00:00:00Z", "record_count": 1709 },
+    { "name": "kev", "last_refreshed_at": "2026-09-13T00:00:00Z", "record_count": 1709 }
   ]
 }
 ```

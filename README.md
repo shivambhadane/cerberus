@@ -128,31 +128,33 @@ Each stage takes a clearly-typed input and produces a clearly-typed output, so t
 
 ## Tech Stack
 
+**In v1 today:**
+
 | Layer | Technology |
 |---|---|
-| Discovery | subfinder, amass, nmap/masscan, nuclei, httpx |
-| Backend / API | Python (FastAPI) or Node.js (TypeScript) |
-| Queue | Redis Streams (early stage) → Kafka (at scale) |
-| Primary database | PostgreSQL |
-| Cache / enrichment store | Redis |
-| Graph queries (optional, later) | Neo4j |
-| Frontend | React / Next.js |
-| Scoring service | Python microservice, independently deployable |
-| Deployment | Docker containers, orchestrated with Docker Compose (dev) / Kubernetes (production) |
+| Discovery | Pure-Python CT log + DNS enumeration, async TCP connect scan, HTTP/banner fingerprinting (`subfinder` used when installed) |
+| Backend / API | Python 3.11+, FastAPI |
+| Database | PostgreSQL, or SQLite for zero-setup local runs (SQLAlchemy 2.x) |
+| Scoring | Python module, importable and independently deployable |
+| Deployment | Docker Compose (Postgres + API) |
+
+**Planned (see [Roadmap](docs/ROADMAP.md)):** Redis Streams then Kafka for the async
+worker queue, React/Next.js dashboard, Neo4j for blast-radius analysis, Kubernetes for
+production deployment.
 
 ## Data Sources
 
 Cerberus is built to run entirely on free, open data. No paid API keys are required to get a fully working instance.
 
-| Source | Provides | Cost |
-|---|---|---|
-| NVD | CVE records, CVSS scores | Free (API key recommended for higher rate limits) |
-| CISA KEV | Confirmed actively-exploited CVEs | Free |
-| EPSS (FIRST.org) | Probability of exploitation in the next 30 days | Free |
-| OSV.dev | Open-source package vulnerabilities | Free |
-| Exploit-DB | Public proof-of-concept exploits | Free |
-| crt.sh | Certificate transparency logs (subdomain discovery) | Free |
-| Nuclei templates | Community-maintained vulnerability detection signatures | Free |
+| Source | Provides | Used in v1 | Cost |
+|---|---|---|---|
+| NVD | CVE records, CVSS scores, CPE matching | Yes | Free (API key recommended for higher rate limits) |
+| CISA KEV | Confirmed actively-exploited CVEs | Yes | Free |
+| EPSS (FIRST.org) | Probability of exploitation in the next 30 days | Yes | Free |
+| crt.sh | Certificate transparency logs (subdomain discovery) | Yes | Free |
+| NVD reference tags | Public proof-of-concept exploit signal | Yes | Free |
+| OSV.dev | Open-source package vulnerabilities | Not yet - needs dependency scanning | Free |
+| Nuclei templates | Community-maintained detection signatures | Not yet | Free |
 
 Optional paid upgrades (not required to run Cerberus): Shodan/Censys (internet-wide asset lookups), GreyNoise (live exploitation telemetry), VulnCheck/Recorded Future (premium threat intelligence).
 
@@ -160,50 +162,68 @@ Optional paid upgrades (not required to run Cerberus): Shodan/Censys (internet-w
 
 ### Prerequisites
 
-- Docker & Docker Compose
-- Go (for building discovery tools, if not using prebuilt binaries)
 - Python 3.11+
-- Node.js 18+ (for the frontend)
+- Docker & Docker Compose (optional - only for running Postgres and the API in containers)
+- `subfinder` (optional - Cerberus uses certificate transparency logs when it is absent)
+
+Discovery runs in pure Python, so no Go toolchain is required to scan.
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/cerberus.git
+git clone https://github.com/shivambhadane/cerberus.git
 cd cerberus
 
-# Install discovery tools
-go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+# Install Python dependencies
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-# Set up environment variables
+# Optional: configure a Postgres URL and an NVD API key.
+# Without a .env, Cerberus uses a local SQLite database and the anonymous
+# NVD rate limit (5 requests/30s, which makes scans slower but still works).
 cp .env.example .env
-# Edit .env with your NVD API key (optional but recommended) and database URLs
 
-# Start core services
-docker compose up -d postgres redis
+# Create the database schema
+python scripts/init_db.py
 
-# Run database migrations
-python manage.py migrate
-
-# Pull the latest enrichment data (CVE, KEV, EPSS)
+# Pull the latest enrichment data (CISA KEV + EPSS, ~1700 CVEs)
 python scripts/refresh_enrichment.py
+```
 
-# Start the API and worker services
-docker compose up -d api worker scoring-engine
+To run against Postgres and serve the API in containers instead:
 
-# Start the frontend
-cd frontend && npm install && npm run dev
+```bash
+docker compose up -d          # postgres + api on :8000
 ```
 
 ### Quick test run
 
 ```bash
+# Scan a target you own or are authorized to test
 python cerberus.py scan --target example.com --authorized
+
+# Inspect the ranked results at any time
+python cerberus.py report --top 10
+python cerberus.py status
 ```
 
-`--authorized` is a required flag confirming you have permission to scan the target. See [Legal & Ethical Use](#legal--ethical-use).
+`--authorized` is a required flag confirming you have permission to scan the target;
+without it the scan is refused. See [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md).
+
+### Running the API
+
+```bash
+uvicorn api.main:app --reload          # http://localhost:8000/docs
+```
+
+All endpoints except `/healthz` require `Authorization: Bearer $API_SECRET_KEY`.
+
+### Running the tests
+
+```bash
+pytest -q
+```
 
 ## Configuration
 
@@ -266,29 +286,38 @@ GET /api/v1/findings/{finding_id}
 
 ```json
 {
-  "asset": "api.example.com",
-  "cve_id": "CVE-2023-XXXXX",
-  "cvss_score": 6.5,
+  "asset": "api.example.com:443",
+  "cve_id": "CVE-2021-41773",
+  "cvss_score": 9.8,
   "kev_listed": true,
-  "epss_score": 0.94,
+  "epss_score": 0.99992,
   "asset_criticality": "high",
-  "risk_score": 98,
-  "reasoning": "Actively exploited (CISA KEV), 94% predicted exploitation probability, affects a production-tagged, internet-facing asset."
+  "risk_score": 89.6,
+  "status": "open",
+  "reasoning": "Actively exploited (CISA KEV, added 2021-11-03); 100% predicted exploitation probability (EPSS); high-criticality asset (hostname indicates a production or data-tier system); internet-facing web service on port 443, critical severity (CVSS 9.8)."
 }
+
+Ranking is driven by exploitation, not severity. In a real run against a lab target,
+`CVE-2023-44487` (CVSS **7.5**, KEV-listed) scored **83.4**, while `CVE-2021-44790`
+(CVSS **9.8**, no known exploitation) scored **63.3** - the lower-severity flaw ranks
+higher because attackers are actually using it.
 ```
 
 ## Project Structure
 
 ```
 cerberus/
-├── discovery/           # Asset discovery scanners and connectors
-├── ingestion/            # Normalization and deduplication workers
-├── enrichment/           # CVE/KEV/EPSS/OSV data pullers and cache
-├── scoring/              # Exploitability scoring engine (standalone service)
-├── api/                  # REST API
-├── frontend/             # Dashboard (React/Next.js)
-├── integrations/         # Slack, Jira, webhook handlers
-├── scripts/              # Setup, migration, and data-refresh scripts
+├── core/                 # Config, database session, ORM models, pipeline orchestration
+├── discovery/            # Subdomain enum, port scanning, technology fingerprinting
+├── ingestion/            # Normalization, dedupe, asset criticality tagging
+├── enrichment/           # CVE/KEV/EPSS pullers, cache, and technology->CVE matching
+├── scoring/              # Exploitability scoring engine
+├── api/                  # REST API (FastAPI)
+├── tests/                # Test suite
+├── scripts/              # Schema creation and enrichment refresh
+├── frontend/             # Dashboard (Phase 2 - not yet implemented)
+├── integrations/         # Slack, Jira, webhooks (Phase 3 - not yet implemented)
+├── cerberus.py           # CLI entry point
 ├── config.yaml
 ├── docker-compose.yml
 └── README.md
