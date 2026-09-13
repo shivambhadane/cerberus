@@ -5,265 +5,298 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Cerberus — Continuous Attack Surface &amp; Exploitability Intelligence</title>
 <meta name="description" content="Cerberus ranks your internet-facing weaknesses by whether attackers are actually exploiting them — not by CVSS severity." />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23f85149' d='M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23d93a2b' d='M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --surface-2: #1c2230;
-    --border: #2a3140;
-    --text: #e6edf3;
-    --dim: #8b949e;
-    --accent: #58a6ff;
-    --danger: #f85149;
-    --warn: #ff8c42;
-    --ok: #3fb950;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-    --max: 1080px;
+    --paper: #f5f3ee;
+    --paper-2: #eceae5;
+    --ink: #111110;
+    --ink-2: #1a1a18;
+    --muted: #6b6a65;
+    --muted-dark: #9a978f;
+    --rule: #d6d3cc;
+    --rule-dark: #2e2e2b;
+    --accent: #d93a2b;
+    --accent-bright: #ff5a45;
+    --ok: #2f7d4f;
+    --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --max: 1200px;
+    --pad: 28px;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
   }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--pad); }
+
+  /* ---------- blueprint framing ---------- */
+  .band { position: relative; border-bottom: 1px solid var(--rule); }
+  .band.dark { background: var(--ink); color: #f4f3f0; border-bottom-color: var(--rule-dark); }
+  .band .wrap { position: relative; padding-top: 76px; padding-bottom: 76px; }
+  /* vertical guide rules */
+  .band .wrap::before, .band .wrap::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 1px;
+    background: var(--rule); pointer-events: none;
+  }
+  .band.dark .wrap::before, .band.dark .wrap::after { background: var(--rule-dark); }
+  .band .wrap::before { left: var(--pad); }
+  .band .wrap::after { right: var(--pad); }
+  @media (max-width: 720px) { .band .wrap::before, .band .wrap::after { display: none; } }
+
+  .tick { position: absolute; width: 7px; height: 7px; background: var(--ink); }
+  .band.dark .tick { background: #f4f3f0; }
+  .tick.tl { top: -4px; left: calc(var(--pad) - 3px); }
+  .tick.tr { top: -4px; right: calc(var(--pad) - 3px); }
+  .tick.bl { bottom: -4px; left: calc(var(--pad) - 3px); }
+  .tick.br { bottom: -4px; right: calc(var(--pad) - 3px); }
+  @media (max-width: 720px) { .tick { display: none; } }
+
+  .slug {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 26px; display: block;
+  }
+  .band.dark .slug { color: var(--muted-dark); }
+  .arrow-mark {
+    color: var(--accent); font-size: 30px; font-weight: 700; line-height: 1;
+    display: block; margin-bottom: 16px; font-family: var(--display);
+  }
+  .band.dark .arrow-mark { color: var(--accent-bright); }
+
+  /* ---------- announcement ---------- */
+  .announce {
+    background: var(--ink); color: #f4f3f0; font-size: 13px;
+    display: flex; justify-content: center; align-items: center; gap: 14px;
+    padding: 9px 16px; flex-wrap: wrap;
+  }
+  .announce .mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted-dark); }
+  .announce a { font-family: var(--mono); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+  .announce a:hover { color: var(--accent-bright); }
+  @media (max-width: 620px) { .announce .desc { display: none; } }
 
   /* ---------- nav ---------- */
-  nav {
-    position: sticky; top: 0; z-index: 10;
-    background: rgba(13, 17, 23, 0.85); backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--border);
+  nav { border-bottom: 1px solid var(--rule); background: var(--paper); position: sticky; top: 0; z-index: 20; }
+  nav .wrap { display: flex; align-items: center; gap: 26px; height: 72px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.4px; }
+  .logo svg { width: 21px; height: 21px; }
+  .nav-links { margin-left: auto; display: flex; gap: 26px; font-size: 14.5px; font-weight: 500; }
+  .nav-links a { text-decoration: none; color: var(--muted); }
+  .nav-links a:hover { color: var(--ink); }
+  @media (max-width: 860px) { .nav-links { display: none; } }
+
+  /* ---------- pill buttons ---------- */
+  .pill {
+    display: inline-flex; align-items: center; gap: 12px; padding: 7px 7px 7px 20px;
+    border-radius: 999px; border: 1px solid var(--ink); background: transparent;
+    font-weight: 600; font-size: 14.5px; text-decoration: none; color: var(--ink);
+    transition: background .18s, color .18s;
   }
-  nav .wrap { display: flex; align-items: center; gap: 20px; height: 58px; }
-  .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; letter-spacing: -0.2px; }
-  .brand svg { width: 20px; height: 20px; }
-  nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
-  nav .links a { color: var(--dim); }
-  nav .links a:hover { color: var(--text); text-decoration: none; }
-  @media (max-width: 640px) { nav .links a.hide-sm { display: none; } }
+  .pill .badge {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: var(--paper);
+    display: grid; place-items: center; font-size: 13px; transition: background .18s, color .18s;
+  }
+  .pill:hover { background: var(--ink); color: var(--paper); }
+  .pill:hover .badge { background: var(--paper); color: var(--ink); }
+  .pill.solid { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pill.solid .badge { background: #fff; color: var(--accent); }
+  .pill.solid:hover { filter: brightness(1.08); background: var(--accent); color: #fff; }
+  .band.dark .pill { border-color: #f4f3f0; color: #f4f3f0; }
+  .band.dark .pill .badge { background: #f4f3f0; color: var(--ink); }
+  .band.dark .pill:hover { background: #f4f3f0; color: var(--ink); }
 
   /* ---------- hero ---------- */
-  header.hero {
-    padding: 96px 0 80px;
-    background:
-      radial-gradient(900px 400px at 50% -10%, rgba(88, 166, 255, 0.10), transparent 70%),
-      linear-gradient(var(--border) 1px, transparent 1px) 0 0 / 100% 56px,
-      linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 56px 100%;
-    background-color: var(--bg);
-    border-bottom: 1px solid var(--border);
+  .hero .wrap { padding-top: 84px; padding-bottom: 84px; }
+  .hero {
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+    background-size: 72px 72px;
+    background-position: center;
   }
-  header.hero .wrap { position: relative; }
-  .hero-grid { display: grid; gap: 48px; align-items: center; }
-  /* Grid items default to min-width:auto, which lets the nowrap command line
-     push the column past the viewport. */
+  .hero-grid { display: grid; gap: 52px; align-items: center; }
   .hero-grid > * { min-width: 0; }
-  @media (min-width: 940px) { .hero-grid { grid-template-columns: 1.05fr 0.95fr; } }
-
-  .preview {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 11px;
-    overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  }
-  .preview-bar {
-    display: flex; align-items: center; gap: 7px; padding: 10px 14px;
-    border-bottom: 1px solid var(--border); background: var(--surface-2);
-  }
-  .preview-bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--border); }
-  .preview-bar span {
-    margin-left: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--dim);
-  }
-  .prow {
-    display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; align-items: center;
-    padding: 13px 15px; border-bottom: 1px solid var(--border);
-  }
-  .prow:last-child { border-bottom: none; }
-  .prow .score { font-family: var(--mono); font-size: 17px; font-weight: 800; }
-  .prow .score.c { color: var(--danger); }
-  .prow .score.m { color: var(--warn); }
-  .prow .score.l { color: var(--dim); }
-  .prow .id { font-family: var(--mono); font-size: 12.5px; }
-  .prow .meta { display: block; color: var(--dim); font-size: 11.5px; margin-top: 2px; }
-  .prow .tag {
-    font-family: var(--mono); font-size: 9.5px; font-weight: 700; padding: 2px 7px;
-    border-radius: 999px; border: 1px solid;
-  }
-  .prow .tag.kev { color: var(--danger); border-color: rgba(248,81,73,.5); background: rgba(248,81,73,.1); }
-  .prow .tag.q { color: var(--dim); border-color: var(--border); }
-  .eyebrow {
-    display: inline-block; font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--accent);
-    border: 1px solid rgba(88, 166, 255, 0.35); background: rgba(88, 166, 255, 0.08);
-    padding: 4px 11px; border-radius: 999px; margin-bottom: 22px;
-  }
+  @media (min-width: 980px) { .hero-grid { grid-template-columns: 1.08fr 0.92fr; } }
   h1 {
-    font-size: clamp(34px, 6vw, 58px); line-height: 1.08; letter-spacing: -1.4px;
-    margin: 0 0 20px; max-width: 17ch; font-weight: 800;
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(38px, 5.6vw, 68px); line-height: 1.02; letter-spacing: -2.2px;
+    margin: 0 0 22px; text-wrap: balance;
   }
-  h1 .strike { color: var(--dim); text-decoration: line-through; text-decoration-color: var(--danger); }
-  .lede { font-size: clamp(16px, 2.2vw, 19px); color: var(--dim); max-width: 54ch; margin: 0 0 32px; }
-  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-  .btn {
-    display: inline-block; padding: 11px 20px; border-radius: 7px; font-weight: 600;
-    font-size: 15px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  }
-  .btn:hover { border-color: var(--accent); text-decoration: none; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
-  .btn.primary:hover { filter: brightness(1.1); }
-  .hero-cmd {
-    margin-top: 30px; font-family: var(--mono); font-size: 13.5px; color: var(--dim);
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 13px 16px; overflow-x: auto; white-space: nowrap;
-  }
-  .hero-cmd .prompt { color: var(--ok); user-select: none; }
+  h1 em { font-style: normal; color: var(--accent); }
+  h1 .struck { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 4px; }
+  .lede { font-size: clamp(16px, 1.6vw, 18.5px); color: var(--muted); max-width: 52ch; margin: 0 0 32px; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
 
-  /* ---------- sections ---------- */
-  section { padding: 84px 0; border-bottom: 1px solid var(--border); }
-  section.alt { background: var(--surface); }
+  /* ---------- product preview ---------- */
+  .preview { border: 1px solid var(--ink); background: var(--ink); border-radius: 12px; overflow: hidden; box-shadow: 14px 14px 0 rgba(17,17,16,.08); }
+  .preview-bar { display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-bottom: 1px solid var(--rule-dark); }
+  .preview-bar i { width: 9px; height: 9px; border-radius: 50%; background: #3a3a36; }
+  .preview-bar span { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted-dark); }
+  .prow { display: grid; grid-template-columns: 58px 1fr auto; gap: 13px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--rule-dark); }
+  .prow:last-child { border-bottom: none; }
+  .prow .score { font-family: var(--mono); font-weight: 700; font-size: 18px; }
+  .prow .score.c { color: var(--accent-bright); }
+  .prow .score.m { color: #e8a13c; }
+  .prow .score.l { color: var(--muted-dark); }
+  .prow .id { font-family: var(--mono); font-size: 12.5px; color: #f4f3f0; }
+  .prow .meta { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted-dark); margin-top: 3px; }
+  .tag { font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; padding: 3px 8px; border-radius: 999px; border: 1px solid; }
+  .tag.kev { color: var(--accent-bright); border-color: rgba(255,90,69,.5); background: rgba(255,90,69,.12); }
+  .tag.q { color: var(--muted-dark); border-color: var(--rule-dark); }
+
+  /* ---------- stat strip ---------- */
+  .stats { border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+  .stats .wrap { display: grid; gap: 1px; padding: 0 var(--pad); grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .stat { padding: 30px 6px; }
+  .stat b { display: block; font-family: var(--display); font-size: 30px; font-weight: 700; letter-spacing: -1px; line-height: 1.1; }
+  .stat span { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+
+  /* ---------- headings ---------- */
   h2 {
-    font-size: clamp(25px, 3.6vw, 34px); line-height: 1.18; letter-spacing: -0.8px;
-    margin: 0 0 14px; max-width: 26ch; font-weight: 700; text-wrap: balance;
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(27px, 3.8vw, 42px); line-height: 1.1; letter-spacing: -1.3px;
+    margin: 0 0 16px; max-width: 20ch; text-wrap: balance;
   }
-  .section-lede { color: var(--dim); max-width: 62ch; margin: 0 0 44px; }
-  h3 { font-size: 17px; margin: 0 0 7px; font-weight: 650; }
+  h2 em { font-style: normal; color: var(--accent); }
+  .band.dark h2 em { color: var(--accent-bright); }
+  .section-lede { color: var(--muted); max-width: 60ch; margin: 0 0 46px; font-size: 16.5px; }
+  .band.dark .section-lede { color: var(--muted-dark); }
+  h3 { font-family: var(--display); font-size: 18px; font-weight: 700; margin: 0 0 8px; letter-spacing: -.3px; }
 
-  .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-  .card {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 22px;
-  }
-  section.alt .card { background: var(--surface-2); }
-  .card p { color: var(--dim); font-size: 14.5px; margin: 0; }
-  .card .n {
-    font-family: var(--mono); font-size: 12px; color: var(--accent);
-    display: block; margin-bottom: 12px;
-  }
+  /* ---------- problem cards ---------- */
+  .cards { display: grid; gap: 0; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); border-top: 1px solid var(--rule-dark); }
+  .cell { padding: 30px 26px 30px 0; border-right: 1px solid var(--rule-dark); }
+  .cell:last-child { border-right: none; }
+  @media (max-width: 780px) { .cell { border-right: none; border-bottom: 1px solid var(--rule-dark); padding-right: 0; } .cell:last-child { border-bottom: none; } }
+  .cell .n { font-family: var(--mono); font-size: 11px; color: var(--accent-bright); display: block; margin-bottom: 16px; letter-spacing: .1em; }
+  .cell p { color: var(--muted-dark); font-size: 14.5px; margin: 0; padding-right: 18px; }
 
-  /* ---------- proof table ---------- */
-  .proof { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
-  .proof-head {
-    display: grid; grid-template-columns: 1.6fr 0.7fr 0.9fr 0.8fr;
-    padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface-2);
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); font-weight: 700;
-  }
-  .proof-row {
-    display: grid; grid-template-columns: 1.6fr 0.7fr 0.9fr 0.8fr;
-    padding: 16px 18px; align-items: center; border-bottom: 1px solid var(--border);
-  }
+  /* ---------- proof ---------- */
+  .proof { border: 1px solid var(--ink); border-radius: 12px; overflow: hidden; background: #fff; }
+  .proof-head { display: grid; grid-template-columns: 1.7fr .6fr .9fr .7fr; gap: 12px; padding: 13px 20px; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
+  .proof-row { display: grid; grid-template-columns: 1.7fr .6fr .9fr .7fr; gap: 12px; padding: 20px; align-items: center; border-bottom: 1px solid var(--rule); }
   .proof-row:last-child { border-bottom: none; }
-  .proof-row .cve { font-family: var(--mono); font-size: 14px; }
-  .proof-row .sub { display: block; color: var(--dim); font-size: 12.5px; font-family: inherit; margin-top: 3px; }
-  .cvss { font-family: var(--mono); font-size: 17px; font-weight: 700; }
-  .cvss.high { color: var(--danger); }
-  .cvss.mid { color: var(--warn); }
-  .risk-out { font-family: var(--mono); font-size: 20px; font-weight: 800; }
-  .risk-out.win { color: var(--danger); }
-  .risk-out.lose { color: var(--dim); }
-  .pill {
-    font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
-    padding: 3px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap;
-  }
-  .pill.kev { color: var(--danger); border-color: rgba(248,81,73,.5); background: rgba(248,81,73,.1); }
-  .pill.none { color: var(--dim); border-color: var(--border); }
-  .proof-note {
-    color: var(--dim); font-size: 14px; margin-top: 18px; padding-left: 14px;
-    border-left: 2px solid var(--border);
-  }
-  @media (max-width: 700px) {
+  .proof-row .cve { font-family: var(--mono); font-size: 14.5px; font-weight: 700; }
+  .proof-row .sub { display: block; font-family: var(--body); font-weight: 400; color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .cvss { font-family: var(--mono); font-size: 19px; font-weight: 700; }
+  .cvss.hi { color: var(--accent); } .cvss.mid { color: #b8801f; }
+  .out { font-family: var(--display); font-size: 30px; font-weight: 700; letter-spacing: -1px; }
+  .out.win { color: var(--accent); } .out.lose { color: var(--muted); }
+  .tag.kev-l { color: var(--accent); border-color: rgba(217,58,43,.45); background: rgba(217,58,43,.08); }
+  .tag.q-l { color: var(--muted); border-color: var(--rule); }
+  .proof-note { margin-top: 22px; padding-left: 16px; border-left: 3px solid var(--accent); color: var(--muted); font-size: 15px; max-width: 68ch; }
+  @media (max-width: 720px) {
     .proof-head { display: none; }
-    .proof-row { grid-template-columns: 1fr auto; gap: 8px 14px; }
-    .proof-row .cvss::before { content: "CVSS "; font-size: 11px; color: var(--dim); font-weight: 400; }
+    .proof-row { grid-template-columns: 1fr auto; }
+    .cvss::before { content: "CVSS "; font-family: var(--mono); font-size: 10px; color: var(--muted); }
   }
 
   /* ---------- pipeline ---------- */
-  .pipeline { display: grid; gap: 14px; }
-  .stage {
-    display: grid; grid-template-columns: 42px 1fr; gap: 18px; align-items: start;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px;
-  }
-  section.alt .stage { background: var(--surface-2); }
-  .stage .idx {
-    font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent);
-    background: rgba(88,166,255,.09); border: 1px solid rgba(88,166,255,.3);
-    border-radius: 7px; text-align: center; padding: 6px 0;
-  }
-  .stage p { color: var(--dim); font-size: 14.5px; margin: 0; }
-  .stage code { font-family: var(--mono); font-size: 13px; color: var(--text); }
+  .stages { display: grid; gap: 0; border-top: 1px solid var(--rule-dark); }
+  .stage { display: grid; grid-template-columns: 76px 1fr; gap: 24px; padding: 26px 0; border-bottom: 1px solid var(--rule-dark); align-items: start; }
+  .stage:last-child { border-bottom: none; }
+  .stage .idx { font-family: var(--mono); font-size: 11px; color: var(--accent-bright); letter-spacing: .1em; padding-top: 4px; }
+  .stage p { color: var(--muted-dark); font-size: 14.5px; margin: 0; max-width: 72ch; }
+  .stage code { font-family: var(--mono); font-size: 13px; color: #f4f3f0; }
+  @media (max-width: 620px) { .stage { grid-template-columns: 1fr; gap: 8px; } }
 
   /* ---------- reasoning ---------- */
-  .reason-box {
-    background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--danger);
-    border-radius: 8px; padding: 20px 22px; font-family: var(--mono); font-size: 13.5px;
-    line-height: 1.75; color: var(--text); overflow-x: auto;
+  .reason {
+    background: #fff; border: 1px solid var(--ink); border-left: 5px solid var(--accent);
+    border-radius: 10px; padding: 24px 26px; font-family: var(--mono); font-size: 13.5px;
+    line-height: 1.8; overflow-x: auto;
   }
-  .reason-box .k { color: var(--dim); }
+  .reason .k { color: var(--muted); }
+  .reason .v { color: var(--accent); font-weight: 700; }
 
   /* ---------- sources ---------- */
-  .sources { display: flex; flex-wrap: wrap; gap: 10px; }
-  .source {
-    border: 1px solid var(--border); border-radius: 7px; padding: 9px 14px;
-    font-size: 14px; background: var(--bg);
-  }
-  section.alt .source { background: var(--surface-2); }
-  .source b { font-weight: 600; }
-  .source span { color: var(--dim); font-size: 13px; }
+  .sources { display: grid; gap: 0; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); border-top: 1px solid var(--rule); }
+  .src { padding: 24px 22px 24px 0; border-right: 1px solid var(--rule); }
+  .src:last-child { border-right: none; }
+  @media (max-width: 780px) { .src { border-right: none; border-bottom: 1px solid var(--rule); padding-right: 0; } .src:last-child { border-bottom: none; } }
+  .src b { font-family: var(--display); font-size: 16px; display: block; margin-bottom: 4px; }
+  .src span { color: var(--muted); font-size: 13.5px; }
 
   /* ---------- ethics ---------- */
-  .ethics {
-    border: 1px solid rgba(255,140,66,.35); background: rgba(255,140,66,.06);
-    border-radius: 10px; padding: 24px 26px;
-  }
-  .ethics h3 { color: var(--warn); }
-  .ethics p { color: var(--dim); margin: 0 0 10px; font-size: 14.5px; max-width: 70ch; }
+  .ethics { border: 1px solid var(--accent); border-radius: 12px; padding: 28px 30px; background: rgba(217,58,43,.04); max-width: 74ch; }
+  .ethics h3 { color: var(--accent); }
+  .ethics p { color: var(--muted); font-size: 14.5px; margin: 0 0 12px; }
   .ethics p:last-child { margin-bottom: 0; }
 
+  /* ---------- final cta ---------- */
+  .final { text-align: center; }
+  .final h2 { max-width: none; margin-inline: auto; }
+  .final .section-lede { margin-inline: auto; }
+  .final .cta-row { justify-content: center; }
+  .cmd {
+    font-family: var(--mono); font-size: 13.5px; margin-top: 30px; display: inline-block;
+    border: 1px solid var(--rule-dark); border-radius: 8px; padding: 13px 20px;
+    color: var(--muted-dark); overflow-x: auto; max-width: 100%; white-space: nowrap;
+  }
+  .cmd .p { color: #4ea36b; }
+
   /* ---------- footer ---------- */
-  footer { padding: 44px 0 60px; color: var(--dim); font-size: 14px; }
-  footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
-  footer .sep { margin-left: auto; }
+  footer { padding: 40px 0 56px; font-size: 13.5px; color: var(--muted); }
+  footer .wrap { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  footer a { text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+  footer .right { margin-left: auto; font-family: var(--mono); font-size: 11.5px; }
 </style>
 </head>
 <body>
 
+<div class="announce">
+  <span class="mono">OPEN SOURCE · MIT</span>
+  <span class="desc">Built on free, public vulnerability intelligence</span>
+  <a href="https://github.com/shivambhadane/cerberus">View the source →</a>
+</div>
+
 <nav>
   <div class="wrap">
-    <span class="brand">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#f85149" d="M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z"/></svg>
+    <span class="logo">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#d93a2b" d="M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z"/></svg>
       Cerberus
     </span>
-    <div class="links">
-      <a href="#problem" class="hide-sm">Problem</a>
+    <div class="nav-links">
+      <a href="#problem">Problem</a>
       <a href="#proof">Proof</a>
-      <a href="#how" class="hide-sm">How it works</a>
-      <a href="https://github.com/shivambhadane/cerberus">GitHub</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#data">Data</a>
     </div>
+    <a class="pill solid" href="https://github.com/shivambhadane/cerberus">
+      Get Cerberus <span class="badge">→</span>
+    </a>
   </div>
 </nav>
 
-<header class="hero">
+<header class="hero band">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap hero-grid">
     <div>
-    <span class="eyebrow">Attack surface &amp; exploitability intelligence</span>
-    <h1>A <span class="strike">9.8</span> nobody exploits is not your biggest problem.</h1>
-    <p class="lede">
-      Cerberus discovers everything you expose to the internet, then ranks each weakness by
-      whether attackers are <em>actually</em> exploiting it right now — not by how frightening
-      its severity score looks. Every ranking comes with the reasoning behind it.
-    </p>
-    <div class="cta-row">
-      <a class="btn primary" href="https://github.com/shivambhadane/cerberus">View on GitHub</a>
-      <a class="btn" href="#proof">See the ranking</a>
-    </div>
-    <div class="hero-cmd">
-      <span class="prompt">$</span> python cerberus.py scan --target example.com --authorized
-    </div>
+      <span class="arrow-mark">↘</span>
+      <h1>A <span class="struck">9.8</span> nobody exploits is not your <em>biggest problem</em>.</h1>
+      <p class="lede">
+        Cerberus finds everything you expose to the internet, then ranks each weakness by
+        whether attackers are exploiting it <em>right now</em> — not by how alarming its
+        severity score looks. Every rank arrives with its reasoning attached.
+      </p>
+      <div class="cta-row">
+        <a class="pill solid" href="https://github.com/shivambhadane/cerberus">Get Cerberus <span class="badge">→</span></a>
+        <a class="pill" href="#proof">See the ranking <span class="badge">↓</span></a>
+      </div>
     </div>
 
-    <div class="preview" role="img" aria-label="Cerberus findings ranked by exploitability, showing a CVSS 7.5 flaw outranking a CVSS 9.8 flaw">
-      <div class="preview-bar">
-        <i></i><i></i><i></i><span>cerberus report --top 4</span>
-      </div>
+    <div class="preview" role="img" aria-label="Cerberus output: a CVSS 7.5 flaw ranked above a CVSS 9.8 flaw because it is actively exploited">
+      <div class="preview-bar"><i></i><i></i><i></i><span>cerberus report --top 4</span></div>
       <div class="prow">
         <div class="score c">85.1</div>
         <div><span class="id">CVE-2021-41773</span><span class="meta">CVSS 9.8 · EPSS 100%</span></div>
@@ -288,74 +321,80 @@
   </div>
 </header>
 
-<section id="problem">
+<div class="stats">
   <div class="wrap">
-    <h2>Three problems that compound</h2>
+    <div class="stat"><b>1,709</b><span>Actively exploited CVEs tracked</span></div>
+    <div class="stat"><b>4</b><span>Open data sources</span></div>
+    <div class="stat"><b>0</b><span>Paid API keys required</span></div>
+    <div class="stat"><b>5</b><span>Replaceable pipeline stages</span></div>
+  </div>
+</div>
+
+<section class="band dark" id="problem">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
+  <div class="wrap">
+    <span class="slug">01 // The problem</span>
+    <span class="arrow-mark">↘</span>
+    <h2>Everything is critical, so <em>nothing is</em>.</h2>
     <p class="section-lede">
-      Security teams can act on a handful of issues a week. Most tooling hands them thousands,
-      sorted by the wrong thing.
+      A security team can act on a handful of issues a week. Most tooling hands them
+      thousands, sorted by the wrong thing entirely.
     </p>
-    <div class="grid">
-      <div class="card">
+    <div class="cards">
+      <div class="cell">
         <span class="n">01</span>
         <h3>Unknown exposure</h3>
-        <p>
-          Cloud servers get spun up and forgotten. Test environments stay online. Shadow IT
-          lives outside every inventory. You cannot defend what you do not know exists.
-        </p>
+        <p>Cloud servers get spun up and forgotten. Test environments stay online. Shadow IT
+           lives outside every inventory. You cannot defend what you do not know exists.</p>
       </div>
-      <div class="card">
+      <div class="cell">
         <span class="n">02</span>
         <h3>Alert overload</h3>
-        <p>
-          Scanners report volume, not priority. A single scan returns thousands of findings,
-          and a generic severity score does not tell you which one to start with on Monday.
-        </p>
+        <p>Scanners report volume, not priority. One scan returns thousands of findings, and a
+           generic severity score will not tell you which one to start with on Monday.</p>
       </div>
-      <div class="card">
+      <div class="cell">
         <span class="n">03</span>
         <h3>Severity is not danger</h3>
-        <p>
-          A 9.8 may never be touched by a real attacker. A 6.5 may be under mass exploitation
-          by ransomware crews today. Static scores miss what is happening in the wild.
-        </p>
+        <p>A 9.8 may never be touched by a real attacker. A 6.5 may be under mass exploitation
+           by ransomware crews today. Static scores miss what is happening in the wild.</p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="alt" id="proof">
+<section class="band" id="proof">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap">
-    <h2>The same scan, ranked two ways</h2>
+    <span class="slug">02 // The proof</span>
+    <span class="arrow-mark">↘</span>
+    <h2>The same scan, ranked <em>two ways</em>.</h2>
     <p class="section-lede">
-      Real output from a Cerberus run against a lab host running Apache 2.4.49. Sort by CVSS and
+      Real output from a run against a lab host running Apache 2.4.49. Sort by severity and
       you patch the wrong one first.
     </p>
 
     <div class="proof">
       <div class="proof-head">
-        <div>Vulnerability</div>
-        <div>CVSS</div>
-        <div>Exploited?</div>
-        <div>Cerberus</div>
+        <div>Vulnerability</div><div>CVSS</div><div>Exploited?</div><div>Cerberus</div>
       </div>
       <div class="proof-row">
-        <div class="cve">
-          CVE-2023-44487
+        <div class="cve">CVE-2023-44487
           <span class="sub">HTTP/2 Rapid Reset — used in record-breaking DDoS campaigns</span>
         </div>
         <div class="cvss mid">7.5</div>
-        <div><span class="pill kev">CISA KEV</span></div>
-        <div class="risk-out win">83.4</div>
+        <div><span class="tag kev-l">CISA KEV</span></div>
+        <div class="out win">83.4</div>
       </div>
       <div class="proof-row">
-        <div class="cve">
-          CVE-2021-44790
+        <div class="cve">CVE-2021-44790
           <span class="sub">Apache mod_lua buffer overflow — no known exploitation</span>
         </div>
-        <div class="cvss high">9.8</div>
-        <div><span class="pill none">no evidence</span></div>
-        <div class="risk-out lose">63.3</div>
+        <div class="cvss hi">9.8</div>
+        <div><span class="tag q-l">no evidence</span></div>
+        <div class="out lose">63.3</div>
       </div>
     </div>
 
@@ -367,70 +406,58 @@
   </div>
 </section>
 
-<section id="how">
+<section class="band dark" id="pipeline">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap">
-    <h2>Five stages, each independently replaceable</h2>
+    <span class="slug">03 // How it works</span>
+    <span class="arrow-mark">↘</span>
+    <h2>Five stages, each <em>independently replaceable</em>.</h2>
     <p class="section-lede">
-      Every stage takes typed input and produces typed output, so any one of them can be
-      swapped — the scoring engine can become a learned model without touching discovery.
+      Every stage takes typed input and produces typed output, so any one can be swapped —
+      the scoring engine can become a learned model without touching discovery.
     </p>
-    <div class="pipeline">
-      <div class="stage">
-        <div class="idx">01</div>
-        <div>
-          <h3>Discovery</h3>
-          <p>Certificate transparency logs, DNS resolution, an async TCP connect scan, and
-             technology fingerprinting from HTTP headers and service banners. Pure Python —
-             no external scanner required.</p>
-        </div>
-      </div>
-      <div class="stage">
-        <div class="idx">02</div>
-        <div>
-          <h3>Ingestion</h3>
-          <p>Normalizes findings into one asset model and deduplicates on re-scan, so a
-             weekly scan refreshes what it sees rather than cloning it. Assets are tagged by
-             business criticality from naming conventions and exposed services.</p>
-        </div>
-      </div>
-      <div class="stage">
-        <div class="idx">03</div>
-        <div>
-          <h3>Enrichment</h3>
-          <p>Caches the CISA KEV catalogue and EPSS scores globally — the same for every
-             tenant, so it is fetched once, not per scan — then resolves each fingerprint to
-             CVEs through the NVD CPE dictionary.</p>
-        </div>
-      </div>
-      <div class="stage">
-        <div class="idx">04</div>
-        <div>
-          <h3>Exploitability scoring</h3>
-          <p>Blends active exploitation, predicted exploitation, asset criticality, and
-             exposure into one score. CVSS is deliberately <em>not</em> a top-level weight.</p>
-        </div>
-      </div>
-      <div class="stage">
-        <div class="idx">05</div>
-        <div>
-          <h3>Delivery</h3>
-          <p>A ranked list through the REST API, the <code>cerberus report</code> CLI, or the
-             dashboard — each showing why a finding sits where it does.</p>
-        </div>
-      </div>
+    <div class="stages">
+      <div class="stage"><div class="idx">01 / DISCOVER</div>
+        <div><h3>Find what you expose</h3>
+        <p>Certificate transparency logs, DNS resolution, an async TCP connect scan, and
+           technology fingerprinting from HTTP headers and service banners. Pure Python — no
+           external scanner needed.</p></div></div>
+      <div class="stage"><div class="idx">02 / INGEST</div>
+        <div><h3>Normalize and deduplicate</h3>
+        <p>Findings collapse into one asset model, so a weekly scan refreshes what it already
+           knows rather than cloning it. Assets are tagged by business criticality from naming
+           conventions and exposed services.</p></div></div>
+      <div class="stage"><div class="idx">03 / ENRICH</div>
+        <div><h3>Ask what attackers are doing</h3>
+        <p>The CISA KEV catalogue and EPSS scores are cached globally — identical for every
+           tenant, so they are fetched once rather than per scan — then each fingerprint is
+           resolved to CVEs through the NVD CPE dictionary.</p></div></div>
+      <div class="stage"><div class="idx">04 / SCORE</div>
+        <div><h3>Rank by exploitability</h3>
+        <p>Active exploitation, predicted exploitation, asset criticality, and exposure blend
+           into a single score. CVSS is deliberately not a top-level weight.</p></div></div>
+      <div class="stage"><div class="idx">05 / DELIVER</div>
+        <div><h3>Hand over a short list</h3>
+        <p>A ranked list through the REST API, the <code>cerberus report</code> CLI, or the
+           dashboard — each one showing why a finding sits where it does.</p></div></div>
     </div>
   </div>
 </section>
 
-<section class="alt">
+<section class="band">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap">
-    <h2>A number you can argue with</h2>
+    <span class="slug">04 // Explainability</span>
+    <span class="arrow-mark">↘</span>
+    <h2>A number you can <em>argue with</em>.</h2>
     <p class="section-lede">
       A score nobody can interrogate is a score nobody will act on. Every finding ships with
-      the reasoning that produced it — verbatim, from the scoring engine.
+      the reasoning that produced it, verbatim from the scoring engine.
     </p>
-    <div class="reason-box">
-      <span class="k">risk_score:</span> 83.4<br />
+    <div class="reason">
+      <span class="k">risk_score:</span> <span class="v">83.4</span><br />
       <span class="k">reasoning:</span> Actively exploited (CISA KEV, added 2023-10-10);
       100% predicted exploitation probability (EPSS); high-criticality asset (hostname
       indicates a production or data-tier system); internet-facing web service on port 443.
@@ -438,25 +465,33 @@
   </div>
 </section>
 
-<section>
+<section class="band" id="data" style="background:var(--paper-2)">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap">
-    <h2>Built entirely on free, open data</h2>
+    <span class="slug">05 // Data sources</span>
+    <span class="arrow-mark">↘</span>
+    <h2>Built entirely on <em>free, open data</em>.</h2>
     <p class="section-lede">
-      No paid API keys are required to run a complete instance. Nothing here is gated behind
-      a vendor contract.
+      No paid keys are required to run a complete instance. Nothing here sits behind a vendor
+      contract.
     </p>
     <div class="sources">
-      <div class="source"><b>CISA KEV</b> — <span>confirmed active exploitation</span></div>
-      <div class="source"><b>EPSS</b> — <span>30-day exploitation probability</span></div>
-      <div class="source"><b>NVD</b> — <span>CVE records, CVSS, CPE matching</span></div>
-      <div class="source"><b>crt.sh</b> — <span>certificate transparency logs</span></div>
+      <div class="src"><b>CISA KEV</b><span>Confirmed active exploitation</span></div>
+      <div class="src"><b>EPSS</b><span>30-day exploitation probability</span></div>
+      <div class="src"><b>NVD</b><span>CVE records, CVSS, CPE matching</span></div>
+      <div class="src"><b>crt.sh</b><span>Certificate transparency logs</span></div>
     </div>
   </div>
 </section>
 
-<section class="alt">
+<section class="band">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
   <div class="wrap">
-    <h2>Scan only what is yours</h2>
+    <span class="slug">06 // Rules of engagement</span>
+    <span class="arrow-mark">↘</span>
+    <h2>Scan only what is <em>yours</em>.</h2>
     <div class="ethics">
       <h3>Authorized use only</h3>
       <p>
@@ -465,36 +500,39 @@
         permission to test may violate computer misuse law regardless of intent.
       </p>
       <p>
-        Every scan requires an explicit authorization attestation, in the CLI and in the
-        dashboard alike. Cerberus reports what <em>could</em> be exploited; it contains no
-        weaponized exploit code and will not exploit anything itself.
+        Every scan requires an explicit authorization attestation, in the CLI and the dashboard
+        alike. Cerberus reports what <em>could</em> be exploited; it ships no weaponized exploit
+        code and will not exploit anything itself.
       </p>
     </div>
   </div>
 </section>
 
-<section>
-  <div class="wrap" style="text-align:center">
-    <h2 style="max-width:none;margin-inline:auto">Find out what is actually dangerous</h2>
-    <p class="section-lede" style="margin-inline:auto">
+<section class="band dark final">
+  <span class="tick tl"></span><span class="tick tr"></span>
+  <span class="tick bl"></span><span class="tick br"></span>
+  <div class="wrap">
+    <h2>Find out what is <em>actually dangerous</em>.</h2>
+    <p class="section-lede">
       Open source under the MIT licence. Clone it, point it at something you own, and see what
       comes back first.
     </p>
-    <div class="cta-row" style="justify-content:center">
-      <a class="btn primary" href="https://github.com/shivambhadane/cerberus">Get Cerberus</a>
-      <a class="btn" href="https://github.com/shivambhadane/cerberus#getting-started">Read the docs</a>
+    <div class="cta-row">
+      <a class="pill" href="https://github.com/shivambhadane/cerberus">View on GitHub <span class="badge">→</span></a>
+      <a class="pill" href="https://github.com/shivambhadane/cerberus#getting-started">Read the docs <span class="badge">→</span></a>
     </div>
+    <div class="cmd"><span class="p">$</span> python cerberus.py scan --target example.com --authorized</div>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <span class="brand">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#f85149" d="M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z"/></svg>
+    <span class="logo" style="font-size:16px">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#d93a2b" d="M8 1 2 3.5v4.2c0 3.4 2.5 6.5 6 7.3 3.5-.8 6-3.9 6-7.3V3.5L8 1Z"/></svg>
       Cerberus
     </span>
     <span>See everything. Know what is dangerous. Fix what matters.</span>
-    <span class="sep"><a href="https://github.com/shivambhadane/cerberus">GitHub</a></span>
+    <span class="right"><a href="https://github.com/shivambhadane/cerberus">GITHUB</a></span>
   </div>
 </footer>
 
