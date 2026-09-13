@@ -7,6 +7,7 @@ Cerberus discovers everything an organization exposes to the internet, correlate
 Three heads, one job: see everything, know what's dangerous, tell you what to fix first.
 
 ## Table of Contents
+- [Documentation](#documentation)
 - [Problem Statement](#problem-statement)
 - [What Cerberus Does](#what-cerberus-does)
 - [How It Works](#how-it-works)
@@ -22,6 +23,15 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 - [Contributing](#contributing)
 - [License](#license)
 - [Disclaimer](#disclaimer)
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [PRD](docs/PRD.md) | What's in/out of scope for v1, feature acceptance criteria |
+| [API Documentation](docs/API.md) | Every endpoint, request/response shape, auth |
+| [Database Schema](docs/DATABASE_SCHEMA.md) | Tables, relationships, and why they're designed that way |
+| [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md) | What Cerberus is allowed to scan, and how |
 
 ## Problem Statement
 
