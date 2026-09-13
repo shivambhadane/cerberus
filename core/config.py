@@ -61,6 +61,11 @@ class Config:
     def api_secret_key(self) -> str:
         return os.environ.get("API_SECRET_KEY", "change-me")
 
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
 
 def load_config(path: Path | None = None) -> Config:
     _load_dotenv(ROOT / ".env")

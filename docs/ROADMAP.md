@@ -31,7 +31,7 @@ former is under active exploitation — the behaviour the whole product exists t
 
 ## Phase 2 — Delivery & polish
 
-- [ ] Dashboard (`frontend/`): ranked findings list + per-asset detail view
+- [x] Dashboard (`frontend/`): ranked findings list + per-asset detail view, asset inventory, scan trigger with authorization gate, and an enrichment-freshness banner
 - [x] `GET /api/v1/assets`, `GET /api/v1/enrichment/status`, `PATCH /api/v1/findings/{id}` (status updates)
 - [ ] Deployment guide (beyond local `docker compose up`)
 - [ ] Demo script / one-pager for presenting the finished pipeline

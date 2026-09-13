@@ -136,11 +136,11 @@ Each stage takes a clearly-typed input and produces a clearly-typed output, so t
 | Backend / API | Python 3.11+, FastAPI |
 | Database | PostgreSQL, or SQLite for zero-setup local runs (SQLAlchemy 2.x) |
 | Scoring | Python module, importable and independently deployable |
+| Frontend | React 18 + TypeScript, built with Vite |
 | Deployment | Docker Compose (Postgres + API) |
 
 **Planned (see [Roadmap](docs/ROADMAP.md)):** Redis Streams then Kafka for the async
-worker queue, React/Next.js dashboard, Neo4j for blast-radius analysis, Kubernetes for
-production deployment.
+worker queue, Neo4j for blast-radius analysis, Kubernetes for production deployment.
 
 ## Data Sources
 
@@ -222,6 +222,15 @@ uvicorn api.main:app --reload          # http://localhost:8000/docs
 ```
 
 All endpoints except `/healthz` require `Authorization: Bearer $API_SECRET_KEY`.
+
+### Running the dashboard
+
+```bash
+cd frontend && npm install && npm run dev     # http://localhost:5173
+```
+
+The dashboard asks for the API token on first load. The API must allow its origin:
+`CORS_ORIGINS=http://localhost:5173`. See [frontend/README.md](frontend/README.md).
 
 ### Running the tests
 
@@ -319,7 +328,7 @@ cerberus/
 ├── api/                  # REST API (FastAPI)
 ├── tests/                # Test suite
 ├── scripts/              # Schema creation and enrichment refresh
-├── frontend/             # Dashboard (Phase 2 - not yet implemented)
+├── frontend/             # Dashboard (React + TypeScript, Vite)
 ├── integrations/         # Slack, Jira, webhooks (Phase 3 - not yet implemented)
 ├── cerberus.py           # CLI entry point
 ├── config.yaml

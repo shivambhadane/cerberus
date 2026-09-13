@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -58,6 +59,15 @@ class ApiError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+# The dashboard is served from a different origin in development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=load_config().cors_origins,
+    allow_methods=["GET", "POST", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.exception_handler(ApiError)
