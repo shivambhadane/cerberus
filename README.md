@@ -32,6 +32,7 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | [API Documentation](docs/API.md) | Every endpoint, request/response shape, auth |
 | [Database Schema](docs/DATABASE_SCHEMA.md) | Tables, relationships, and why they're designed that way |
 | [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md) | What Cerberus is allowed to scan, and how |
+| [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
 
 ## Problem Statement
 
@@ -295,16 +296,12 @@ cerberus/
 
 ## Roadmap
 
-- [ ] Core discovery pipeline (subdomains, ports, tech fingerprinting)
-- [ ] CVE/KEV/EPSS enrichment
-- [ ] Baseline weighted scoring engine
-- [ ] Cloud connector support (AWS/Azure/GCP asset inventory)
-- [ ] Asset criticality tagging UI
-- [ ] Slack/Jira integration
-- [ ] Multi-tenant support with row-level security
-- [ ] Graph-based blast-radius analysis
-- [ ] Learned scoring model (trained on confirmed-exploit outcomes)
-- [ ] Public API for MSSP/partner use
+Full phased breakdown with build order and exit criteria: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+- [x] Foundation docs: README, PRD, API contract, database schema, rules of engagement, repo scaffold
+- [ ] MVP pipeline: discovery → ingestion → enrichment → scoring → CLI, end to end against a single target
+- [ ] Delivery & polish: dashboard, remaining API endpoints, deployment guide
+- [ ] Scale features: cloud connectors, criticality UI, Slack/Jira integration, multi-tenant support, graph-based blast-radius analysis, learned scoring model, public API
 
 ## Legal & Ethical Use
 
