@@ -38,6 +38,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         f"done: {summary['assets']} assets, {summary['findings']} findings, "
         f"{summary['scored']} scored"
     )
+    if summary.get("warning"):
+        print(f"\nWARNING: {summary['warning']}", file=sys.stderr)
     print("\nTop findings:")
     _print_report(args.top)
     return 0

@@ -46,3 +46,35 @@ class _NullScope:
 
 def _null_session_scope():
     return _NullScope()
+
+
+def test_empty_cache_produces_a_warning(session):
+    from enrichment.cache import cache_warning
+
+    warning = cache_warning(session, max_age_hours=24)
+    assert warning is not None
+    assert "refresh_enrichment" in warning
+
+
+def test_stale_cache_produces_a_warning(session):
+    from datetime import timedelta
+
+    from core.models import SourceRefresh, utcnow
+    from enrichment.cache import cache_warning
+
+    session.add(SourceRefresh(name="kev", record_count=1700, last_refreshed_at=utcnow() - timedelta(days=5)))
+    session.flush()
+
+    warning = cache_warning(session, max_age_hours=24)
+    assert warning is not None
+    assert "old" in warning
+
+
+def test_fresh_cache_produces_no_warning(session):
+    from core.models import SourceRefresh, utcnow
+    from enrichment.cache import cache_warning
+
+    session.add(SourceRefresh(name="kev", record_count=1700, last_refreshed_at=utcnow()))
+    session.flush()
+
+    assert cache_warning(session, max_age_hours=24) is None

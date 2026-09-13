@@ -6,6 +6,7 @@ from core.config import Config, load_config
 from core.db import get_default_tenant, init_db, session_scope
 from core.models import Scan, utcnow
 from discovery.runner import run_discovery
+from enrichment.cache import cache_warning
 from enrichment.matcher import match_findings
 from enrichment.sources import NvdClient
 from ingestion.normalize import ingest_assets
@@ -49,7 +50,7 @@ def run_pipeline(scan_id: str, config: Config | None = None) -> dict:
     """Run discovery -> ingestion -> enrichment -> scoring for an existing scan."""
     config = config or load_config()
     nvd = NvdClient(api_key=config.nvd_api_key)
-    summary = {"assets": 0, "findings": 0, "scored": 0}
+    summary: dict = {"assets": 0, "findings": 0, "scored": 0, "warning": None}
 
     try:
         with session_scope() as session:
@@ -58,6 +59,10 @@ def run_pipeline(scan_id: str, config: Config | None = None) -> dict:
                 raise ScanNotFoundError(f"no scan with id {scan_id}")
             scan.status = "discovering"
             target, tenant_id = scan.target_domain, scan.tenant_id
+
+            summary["warning"] = cache_warning(session, config.enrichment.refresh_interval_hours)
+            if summary["warning"]:
+                log.warning("%s", summary["warning"])
 
         discovered = run_discovery(target, config.discovery)
 

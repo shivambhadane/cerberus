@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -80,3 +81,29 @@ def refresh_global_sources(session: Session, include_epss: bool = True) -> dict[
 
     log.info("enrichment cache refreshed: %s", counts)
     return counts
+
+
+def cache_warning(session: Session, max_age_hours: int) -> str | None:
+    """Warn when the KEV cache is missing or stale.
+
+    Without it every finding scores as if it were not exploited, which silently
+    inverts the ranking this tool exists to produce - so this must never fail quietly.
+    """
+    kev = session.get(SourceRefresh, "kev")
+    if kev is None or not kev.record_count:
+        return (
+            "enrichment cache is empty: every finding will be scored as NOT actively "
+            "exploited, so the ranking will be wrong. Run: python scripts/refresh_enrichment.py"
+        )
+
+    refreshed = kev.last_refreshed_at
+    if refreshed.tzinfo is None:
+        refreshed = refreshed.replace(tzinfo=UTC)
+    age = utcnow() - refreshed
+    if age > timedelta(hours=max_age_hours):
+        hours = int(age.total_seconds() // 3600)
+        return (
+            f"enrichment cache is {hours}h old (limit {max_age_hours}h); newly exploited "
+            "CVEs may be missing. Run: python scripts/refresh_enrichment.py"
+        )
+    return None

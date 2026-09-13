@@ -191,6 +191,10 @@ python scripts/init_db.py
 python scripts/refresh_enrichment.py
 ```
 
+> **Run the enrichment refresh before your first scan.** Without it, every finding is
+> scored as if it were *not* actively exploited, which inverts the ranking Cerberus
+> exists to produce. Scans warn loudly when the cache is empty or stale.
+
 To run against Postgres and serve the API in containers instead:
 
 ```bash
