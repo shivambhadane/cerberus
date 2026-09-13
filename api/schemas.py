@@ -8,16 +8,20 @@ from pydantic import BaseModel, Field
 class ScanRequest(BaseModel):
     target_domain: str = Field(min_length=1, max_length=255)
     authorized: bool = False
+    profile: str | None = None
+    accept_profile: bool = False
 
 
 class ScanCreated(BaseModel):
     scan_id: str
     status: str
+    profile: str
 
 
 class ScanStatus(BaseModel):
     scan_id: str
     target_domain: str
+    profile: str
     status: str
     started_at: datetime
     completed_at: datetime | None = None

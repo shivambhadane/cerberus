@@ -13,6 +13,7 @@ from core.config import load_config
 from core.db import init_db, session_scope
 from core.models import Asset, CveEnrichment, Finding, SourceRefresh
 from core.pipeline import NotAuthorizedError, run_pipeline, start_scan
+from core.profiles import PROFILES, ProfileViolation, get_profile
 from enrichment.cache import refresh_global_sources
 
 
@@ -26,14 +27,23 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
+    config = load_config()
     try:
-        scan_id = start_scan(args.target, args.authorized)
+        profile = get_profile(args.profile or config.scanning.profile, opted_in=args.accept_profile)
+    except ProfileViolation as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        scan_id = start_scan(args.target, args.authorized, profile=profile.name)
     except NotAuthorizedError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
 
+    print(f"profile: {profile.name} - {profile.description}")
+
     print(f"scan {scan_id} started against {args.target}")
-    summary = run_pipeline(scan_id, load_config())
+    summary = run_pipeline(scan_id, config, profile=profile)
     print(
         f"done: {summary['assets']} assets, {summary['findings']} findings, "
         f"{summary['scored']} scored"
@@ -113,6 +123,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--authorized",
         action="store_true",
         help="attest that you own or have written authorization to scan this target",
+    )
+    scan.add_argument(
+        "--profile",
+        choices=sorted(PROFILES),
+        help="what scanners may do (default: the profile in config.yaml)",
+    )
+    scan.add_argument(
+        "--accept-profile",
+        action="store_true",
+        help="acknowledge a more intrusive profile that requires explicit opt-in",
     )
     scan.add_argument("--top", type=int, default=10, help="findings to print when done")
     scan.set_defaults(func=cmd_scan)

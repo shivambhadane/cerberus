@@ -27,14 +27,25 @@ class DiscoveryConfig:
     port_scan: bool = True
     scan_interval_hours: int = 24
     ports: list[int] = field(default_factory=list)
-    max_concurrency: int = 100
+    max_concurrency: int = 50
     connect_timeout: float = 2.0
+    # Scope controls. Hosts and ports listed here are never probed, even when the
+    # target domain would otherwise permit them.
+    excluded_hosts: list[str] = field(default_factory=list)
+    excluded_ports: list[int] = field(default_factory=list)
 
 
 @dataclass
 class EnrichmentConfig:
     refresh_interval_hours: int = 24
     sources: list[str] = field(default_factory=lambda: ["nvd", "kev", "epss", "osv"])
+
+
+@dataclass
+class ScanningConfig:
+    """Which scan profile a scan uses unless one is requested explicitly."""
+
+    profile: str = "safe"
 
 
 @dataclass
@@ -46,6 +57,7 @@ class ScoringConfig:
 class Config:
     discovery: DiscoveryConfig
     enrichment: EnrichmentConfig
+    scanning: ScanningConfig
     scoring: ScoringConfig
     integrations: dict
 
@@ -73,6 +85,7 @@ def load_config(path: Path | None = None) -> Config:
     return Config(
         discovery=DiscoveryConfig(**(raw.get("discovery") or {})),
         enrichment=EnrichmentConfig(**(raw.get("enrichment") or {})),
+        scanning=ScanningConfig(**(raw.get("scanning") or {})),
         scoring=ScoringConfig(**(raw.get("scoring") or {})),
         integrations=raw.get("integrations") or {},
     )

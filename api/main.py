@@ -35,6 +35,7 @@ from core.models import (
     SourceRefresh,
 )
 from core.pipeline import create_scan_record, run_pipeline
+from core.profiles import ProfileViolation, get_profile
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,14 @@ def create_scan(
     if not payload.authorized:
         raise ApiError(400, "invalid_request", "authorized must be true to start a scan")
 
+    try:
+        profile = get_profile(
+            payload.profile or load_config().scanning.profile,
+            opted_in=payload.accept_profile,
+        )
+    except ProfileViolation as exc:
+        raise ApiError(400, "invalid_profile", str(exc)) from None
+
     tenant = get_default_tenant(session)
     active = session.scalar(
         select(Scan).where(Scan.tenant_id == tenant.id, Scan.status.in_(ACTIVE_STATUSES))
@@ -111,13 +120,13 @@ def create_scan(
         raise ApiError(409, "scan_in_progress", f"scan {active.id} is already running for this tenant")
 
     scan_id = create_scan_record(
-        session, payload.target_domain, payload.authorized, tenant.id
+        session, payload.target_domain, payload.authorized, tenant.id, profile.name
     )
     # The background task opens its own session, so the row must be durable before
     # it starts - dependency teardown commits too late for it to be visible.
     session.commit()
     background.add_task(run_pipeline, scan_id, load_config())
-    return ScanCreated(scan_id=scan_id, status="pending")
+    return ScanCreated(scan_id=scan_id, status="pending", profile=profile.name)
 
 
 @app.get("/api/v1/scans/{scan_id}", response_model=ScanStatus, dependencies=[Depends(require_auth)])
@@ -128,6 +137,7 @@ def get_scan(scan_id: str, session: Session = Depends(get_session)) -> ScanStatu
     return ScanStatus(
         scan_id=scan.id,
         target_domain=scan.target_domain,
+        profile=scan.profile,
         status=scan.status,
         started_at=scan.started_at,
         completed_at=scan.completed_at,

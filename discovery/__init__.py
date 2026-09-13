@@ -1,3 +1,3 @@
-from discovery.runner import DiscoveredAsset, run_discovery
+from discovery.runner import DiscoveryResult, run_discovery
 
-__all__ = ["DiscoveredAsset", "run_discovery"]
+__all__ = ["DiscoveryResult", "run_discovery"]

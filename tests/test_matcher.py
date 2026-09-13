@@ -12,6 +12,11 @@ from enrichment.matcher import _kev_fallback, _version_candidates, parse_technol
         ("Apache/2.4.49 (Ubuntu)", "apache", "2.4.49"),
         ("OpenSSH/8.9p1", "openssh", "8.9p1"),
         ("Apache", "apache", None),
+        # nmap -sV reports vendor-prefixed names; losing the version here would
+        # match every CVE for the product regardless of the version in use.
+        ("Apache httpd/2.4.49", "apache httpd", "2.4.49"),
+        ("Apache Tomcat", "apache tomcat", None),
+        ("Microsoft IIS httpd/10.0", "microsoft iis httpd", "10.0"),
     ],
 )
 def test_parse_technology(banner, product, version):

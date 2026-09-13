@@ -26,6 +26,8 @@ CPE_PAGE_SIZE = 2000
 PRODUCT_ALIASES: dict[str, tuple[str, str]] = {
     "apache": ("apache http server", "http_server"),
     "httpd": ("apache http server", "http_server"),
+    # nmap -sV reports vendor-prefixed product names.
+    "apache httpd": ("apache http server", "http_server"),
     "iis": ("internet information services", "internet_information_services"),
     "microsoft-iis": ("internet information services", "internet_information_services"),
     "openssh": ("openssh", "openssh"),
@@ -145,11 +147,12 @@ class NvdClient:
         search_term, expected_product = PRODUCT_ALIASES.get(key, (product, key))
         data = self._get("cpes/2.0", {"keywordSearch": search_term, "resultsPerPage": CPE_PAGE_SIZE})
 
+        acceptable = _acceptable_products(key, expected_product)
         counts: Counter[str] = Counter()
         if data:
             for entry in data.get("products", []):
                 parts = entry["cpe"]["cpeName"].split(":")
-                if len(parts) > 5 and parts[2] == "a" and parts[4].lower() == expected_product:
+                if len(parts) > 5 and parts[2] == "a" and parts[4].lower() in acceptable:
                     counts[f"cpe:2.3:a:{parts[3]}:{parts[4]}"] += 1
 
         bases = [base for base, _ in counts.most_common(MAX_CPE_CANDIDATES)]
@@ -188,6 +191,21 @@ class NvdClient:
             description=_english_description(cve.get("descriptions", [])),
             has_public_exploit=_has_exploit_reference(cve.get("references", [])),
         )
+
+
+def _acceptable_products(key: str, expected_product: str) -> set[str]:
+    """CPE product names that a fingerprint could reasonably mean.
+
+    Fingerprints arrive vendor-prefixed ("apache tomcat") while CPE names them by
+    product alone ("tomcat"), so accept the trailing words as well as the full name.
+    """
+    acceptable = {expected_product}
+    words = key.split()
+    if len(words) > 1:
+        acceptable.add("_".join(words))
+        acceptable.add("_".join(words[1:]))
+        acceptable.add(words[-1])
+    return acceptable
 
 
 def _primary_cvss(metrics: dict) -> float | None:

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.adapters import DetectionMethod
 from core.models import Asset, AssetCriticality, CveEnrichment, Finding
 from ingestion.criticality import SENSITIVE_PORTS
 
@@ -87,7 +88,15 @@ def score_finding(
     criticality_reason: str | None,
     port: int,
     weights: dict[str, float] | None = None,
+    detection_method: str | None = None,
 ) -> ScoreResult:
+    """Score one finding.
+
+    `detection_method` is reported but deliberately does not change the score. How a
+    weakness was found says how confident we are that it exists, not how dangerous it
+    is; folding confidence into the risk number would make the weights in config.yaml
+    stop describing the result.
+    """
     weights = {**DEFAULT_WEIGHTS, **(weights or {})}
 
     kev_value, kev_note = _kev_component(cve)
@@ -111,7 +120,12 @@ def score_finding(
     if criticality_reason:
         crit_note += f" ({criticality_reason})"
 
-    notes = [n for n in (kev_note, epss_note, crit_note, exposure_note) if n]
+    detection_note = (
+        "confirmed by active probe"
+        if detection_method == DetectionMethod.ACTIVE_DETECTION
+        else None
+    )
+    notes = [n for n in (kev_note, epss_note, crit_note, exposure_note, detection_note) if n]
     summary = "; ".join(notes)
     reasoning = (summary[:1].upper() + summary[1:] + ".") if summary else "No risk signals available."
     if not kev_note and (cve.epss_score or 0) < 0.05:
@@ -132,7 +146,7 @@ def score_pending_findings(session: Session, weights: dict[str, float] | None = 
     for finding, cve, asset, criticality in rows:
         level = criticality.level if criticality else "medium"
         reason = criticality.reason if criticality else None
-        result = score_finding(cve, level, reason, asset.port, weights)
+        result = score_finding(cve, level, reason, asset.port, weights, finding.detection_method)
         finding.risk_score = result.risk_score
         finding.reasoning = result.reasoning
 

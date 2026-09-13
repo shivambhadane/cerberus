@@ -1,3 +1,5 @@
+"""Stage 2: raw observations -> normalized assets, with provenance preserved."""
+
 from __future__ import annotations
 
 import logging
@@ -5,20 +7,62 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.models import Asset, AssetCriticality, utcnow
-from discovery.runner import DiscoveredAsset
+from core.adapters import Observation, ObservationKind
+from core.models import Asset, AssetCriticality, ObservationRecord, utcnow
+from discovery.runner import DiscoveryResult
 from ingestion.criticality import infer_criticality
 
 log = logging.getLogger(__name__)
+
+
+def persist_observations(session: Session, scan_id: str, observations: list[Observation]) -> int:
+    """Store every tool observation verbatim, before any normalization."""
+    for obs in observations:
+        session.add(
+            ObservationRecord(
+                scan_id=scan_id,
+                kind=obs.kind,
+                target=obs.target,
+                source_tool=obs.source_tool,
+                source_version=obs.source_version,
+                data=obs.data,
+                raw=obs.raw,
+                observed_at=obs.observed_at,
+            )
+        )
+    session.flush()
+    log.info("persisted %d raw observations", len(observations))
+    return len(observations)
+
+
+def _technology_index(result: DiscoveryResult) -> dict[str, tuple[str, str]]:
+    """target -> (technology, tool). Later observations win, so a dedicated probe
+    can refine what a port scanner guessed."""
+    index: dict[str, tuple[str, str]] = {}
+    for obs in result.observations:
+        technology = obs.data.get("technology")
+        if not technology:
+            continue
+        if obs.kind in (ObservationKind.TECHNOLOGY, ObservationKind.OPEN_PORT):
+            index[obs.target] = (technology, obs.source_tool)
+    return index
 
 
 def ingest_assets(
     session: Session,
     tenant_id: str,
     scan_id: str,
-    discovered: list[DiscoveredAsset],
+    result: DiscoveryResult,
 ) -> list[Asset]:
-    """Stage 2: upsert discovered assets, deduplicating on (tenant, host, port, protocol)."""
+    """Upsert discovered endpoints, deduplicating on (tenant, host, port, protocol)."""
+    persist_observations(session, scan_id, result.observations)
+    technologies = _technology_index(result)
+
+    port_tools = {
+        obs.target: obs.source_tool
+        for obs in result.by_kind(ObservationKind.OPEN_PORT)
+    }
+
     existing = {
         (a.hostname, a.port, a.protocol): a
         for a in session.scalars(select(Asset).where(Asset.tenant_id == tenant_id))
@@ -27,18 +71,22 @@ def ingest_assets(
     assets: list[Asset] = []
     created = updated = 0
 
-    for item in discovered:
-        key = (item.hostname, item.port, item.protocol)
+    for endpoint in result.endpoints:
+        key = (endpoint.hostname, endpoint.port, endpoint.protocol)
+        technology, tech_tool = technologies.get(str(endpoint), (None, None))
+        found_by = port_tools.get(str(endpoint))
+
         asset = existing.get(key)
         if asset is None:
             asset = Asset(
                 tenant_id=tenant_id,
                 discovered_by_scan_id=scan_id,
-                hostname=item.hostname,
-                ip_address=item.ip_address,
-                port=item.port,
-                protocol=item.protocol,
-                technology=item.technology,
+                hostname=endpoint.hostname,
+                ip_address=endpoint.ip_address,
+                port=endpoint.port,
+                protocol=endpoint.protocol,
+                technology=technology,
+                discovered_by_tool=tech_tool or found_by,
             )
             session.add(asset)
             session.flush()
@@ -46,8 +94,10 @@ def ingest_assets(
             created += 1
         else:
             asset.last_seen_at = utcnow()
-            asset.ip_address = item.ip_address or asset.ip_address
-            asset.technology = item.technology or asset.technology
+            asset.ip_address = endpoint.ip_address or asset.ip_address
+            if technology:
+                asset.technology = technology
+                asset.discovered_by_tool = tech_tool
             updated += 1
 
         _ensure_criticality(session, asset)

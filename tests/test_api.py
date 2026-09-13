@@ -131,3 +131,49 @@ def test_second_scan_while_one_is_running_is_rejected(client, monkeypatch):
 
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "scan_in_progress"
+
+
+def test_scan_defaults_to_the_safe_profile(client, monkeypatch):
+    monkeypatch.setattr("api.main.run_pipeline", lambda scan_id, config: None)
+    response = client.post(
+        "/api/v1/scans", headers=AUTH, json={"target_domain": "example.com", "authorized": True}
+    )
+    assert response.status_code == 202
+    assert response.json()["profile"] == "safe"
+
+
+def test_intrusive_profile_is_refused_without_opt_in(client, monkeypatch):
+    monkeypatch.setattr("api.main.run_pipeline", lambda scan_id, config: None)
+    response = client.post(
+        "/api/v1/scans",
+        headers=AUTH,
+        json={"target_domain": "example.com", "authorized": True, "profile": "thorough"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_profile"
+
+
+def test_intrusive_profile_is_accepted_with_explicit_opt_in(client, monkeypatch):
+    monkeypatch.setattr("api.main.run_pipeline", lambda scan_id, config: None)
+    response = client.post(
+        "/api/v1/scans",
+        headers=AUTH,
+        json={
+            "target_domain": "example.com",
+            "authorized": True,
+            "profile": "thorough",
+            "accept_profile": True,
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["profile"] == "thorough"
+
+
+def test_unknown_profile_is_refused(client, monkeypatch):
+    monkeypatch.setattr("api.main.run_pipeline", lambda scan_id, config: None)
+    response = client.post(
+        "/api/v1/scans",
+        headers=AUTH,
+        json={"target_domain": "example.com", "authorized": True, "profile": "yolo"},
+    )
+    assert response.status_code == 400

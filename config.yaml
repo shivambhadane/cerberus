@@ -7,6 +7,13 @@ discovery:
   connect_timeout: 2.0
   ports: []          # empty = discovery.ports.DEFAULT_PORTS
 
+# What scanners are permitted to do. See core/profiles.py.
+#   passive  - no active probing at all
+#   safe     - non-destructive detection, medium severity and above (default)
+#   thorough - broader coverage for targets you own; must be requested explicitly
+scanning:
+  profile: safe
+
 enrichment:
   refresh_interval_hours: 24
   sources:
