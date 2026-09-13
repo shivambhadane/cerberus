@@ -232,6 +232,10 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
 The dashboard asks for the API token on first load. The API must allow its origin:
 `CORS_ORIGINS=http://localhost:5173`. See [frontend/README.md](frontend/README.md).
 
+### Viewing the landing page
+
+A single static file with no build step — see [landing/README.md](landing/README.md).
+
 ### Running the tests
 
 ```bash
@@ -329,6 +333,7 @@ cerberus/
 ├── tests/                # Test suite
 ├── scripts/              # Schema creation and enrichment refresh
 ├── frontend/             # Dashboard (React + TypeScript, Vite)
+├── landing/              # Static marketing landing page
 ├── integrations/         # Slack, Jira, webhooks (Phase 3 - not yet implemented)
 ├── cerberus.py           # CLI entry point
 ├── config.yaml
