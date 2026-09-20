@@ -10,9 +10,14 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT / "config.yaml"
 
 
+_DOTENV_LOADED = False
+
+
 def _load_dotenv(path: Path) -> None:
-    if not path.exists():
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED or not path.exists():
         return
+    _DOTENV_LOADED = True
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:

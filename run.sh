@@ -19,12 +19,25 @@ cd "$ROOT"
 
 VENV="$ROOT/.venv"
 PY="$VENV/bin/python"
-RUN_DIR="$ROOT/.run"
+RUN_DIR="${CERBERUS_RUN_DIR:-$ROOT/.run}"   # overridable, so a test stack never shares pid files with yours
 LOG_DIR="$RUN_DIR/logs"
 API_PORT="${API_PORT:-8000}"
 WEB_PORT="${WEB_PORT:-5173}"
-API_URL="http://localhost:$API_PORT"
-WEB_URL="http://localhost:$WEB_PORT"
+CERTS_DIR="$ROOT/.certs"
+
+# LOCAL_HTTPS=1 (environment, or .env: `./run.sh https` sets it) serves the API and the dashboard over
+# https://localhost. Some OAuth providers refuse an http:// redirect URL, and the OAuth cookie needs the
+# dashboard and the API on the same scheme. See scripts/local_https.sh for what it trusts and why that is safe.
+local_https_wanted() {
+  local v="${LOCAL_HTTPS:-}"
+  if [ -z "$v" ] && [ -f "$ROOT/.env" ]; then
+    v="$(grep -E '^LOCAL_HTTPS=' "$ROOT/.env" | tail -1 | cut -d= -f2- || true)"
+  fi
+  case "$v" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac
+}
+if local_https_wanted; then MODE=https; CURL_CA="$CERTS_DIR/ca.pem"; else MODE=http; CURL_CA=""; fi
+API_URL="$MODE://localhost:$API_PORT"
+WEB_URL="$MODE://localhost:$WEB_PORT"
 
 # Colour only when a terminal is attached, so piping to a file stays readable.
 if [ -t 1 ]; then
@@ -66,7 +79,7 @@ running() { # true if the PID file names a live process
 wait_for_http() { # wait_for_http URL SECONDS
   local url="$1" deadline=$((SECONDS + ${2:-30}))
   while [ $SECONDS -lt $deadline ]; do
-    curl -fsS -o /dev/null "$url" 2>/dev/null && return 0
+    curl -fsS -o /dev/null ${CURL_CA:+--cacert "$CURL_CA"} "$url" 2>/dev/null && return 0
     sleep 0.3
   done
   return 1
@@ -164,22 +177,33 @@ cmd_setup() {
     (cd frontend && npm install --silent)
   fi
 
-  # KEV/EPSS is what makes the ranking mean anything: without it every finding scores as "nobody is
-  # exploiting this", which silently inverts the results. Fetch it if it has never been fetched.
-  if ! "$PY" - <<'EOF' >/dev/null 2>&1
-import sys
-from sqlalchemy import select
-from core.db import session_scope
-from core.models import SourceRefresh
-with session_scope() as s:
-    sys.exit(0 if s.scalar(select(SourceRefresh).where(SourceRefresh.name == "kev")) else 1)
-EOF
-  then
-    say "Loading exploitation data (CISA KEV + EPSS, about 30 seconds)"
-    "$PY" scripts/refresh_enrichment.py
-  fi
+  ensure_enrichment
 
   say "${GREEN}Ready.${OFF} Start it with: ./run.sh"
+}
+
+ensure_enrichment() {
+  # KEV/EPSS is what makes the ranking mean anything: without it every finding scores as "nobody is
+  # exploiting this", which silently inverts the results. Refresh it if missing or older than 24 hours.
+  if ! "$PY" - <<'EOF' >/dev/null 2>&1
+import sys, datetime
+from sqlalchemy import select
+from core.db import session_scope
+from core.models import SourceRefresh, utcnow
+with session_scope() as s:
+    kev = s.scalar(select(SourceRefresh).where(SourceRefresh.name == "kev"))
+    if not kev or not kev.last_refreshed_at or kev.record_count == 0:
+        sys.exit(1)
+    now = utcnow()
+    refreshed = kev.last_refreshed_at.replace(tzinfo=datetime.timezone.utc) if kev.last_refreshed_at.tzinfo is None else kev.last_refreshed_at
+    if (now - refreshed).total_seconds() > 24 * 3600:
+        sys.exit(1)
+    sys.exit(0)
+EOF
+  then
+    say "Refreshing exploitation data (CISA KEV + EPSS)..."
+    "$PY" scripts/refresh_enrichment.py
+  fi
 }
 
 ensure_setup() { # the quiet version, run before starting anything
@@ -187,6 +211,7 @@ ensure_setup() { # the quiet version, run before starting anything
   [ -d frontend/node_modules ] || { say "Dashboard dependencies are missing"; cmd_setup; return; }
   ensure_env
   "$PY" scripts/init_db.py >/dev/null
+  ensure_enrichment
 }
 
 # --- starting and stopping ----------------------------------------------------------------
@@ -215,6 +240,14 @@ start_one() { # start_one NAME PORT COMMAND...
   local pid=$!
   disown "$pid" 2>/dev/null || true
   echo "$pid" > "$RUN_DIR/$name.pid"
+  echo "$MODE" > "$RUN_DIR/$name.mode"
+}
+
+# True when the process was started as http but https is wanted now, or the other way round.
+mode_changed() { [ "$(cat "$RUN_DIR/$1.mode" 2>/dev/null || echo http)" != "$MODE" ]; }
+
+ensure_certs() {
+  "$ROOT/scripts/local_https.sh" setup >/dev/null || die "could not create the local certificates (scripts/local_https.sh setup)"
 }
 
 stop_one() {
@@ -238,10 +271,34 @@ cmd_stop() {
   info "done"
 }
 
+# True when the API this script started is older than the code or settings it is serving. uvicorn is
+# started without --reload, so an API left running across an update keeps answering with the old
+# routes (a 404 on a new endpoint) and the old bugs. The pid file is written at start, so "is anything
+# newer than it" is the process's age, and `find -newer` behaves the same on Linux and macOS.
+api_is_stale() {
+  running api || return 1
+  mode_changed api && return 0
+  [ -n "$(find api core providers discovery ingestion enrichment scoring migrations .env config.yaml \
+    -type f \( -name '*.py' -o -name '.env' -o -name 'config.yaml' \) \
+    -newer "$RUN_DIR/api.pid" -print -quit 2>/dev/null)" ]
+}
+
 cmd_api() {
   ensure_setup
+  if api_is_stale; then
+    say "The running API predates the latest code or .env: restarting it"
+    stop_one api
+  fi
   say "Starting the API"
-  start_one api "$API_PORT" "$VENV/bin/uvicorn" api.main:app --host 127.0.0.1 --port "$API_PORT"
+  if [ "$MODE" = https ]; then
+    ensure_certs
+    # These override .env for this process only: the redirect URIs, the cookie and CORS must all say https.
+    start_one api "$API_PORT" env PUBLIC_API_URL="$API_URL" FRONTEND_URL="$WEB_URL" CORS_ORIGINS="$WEB_URL" \
+      COOKIE_SECURE=1 "$VENV/bin/uvicorn" api.main:app --host 127.0.0.1 --port "$API_PORT" \
+      --ssl-keyfile "$CERTS_DIR/localhost.key" --ssl-certfile "$CERTS_DIR/localhost.pem"
+  else
+    start_one api "$API_PORT" "$VENV/bin/uvicorn" api.main:app --host 127.0.0.1 --port "$API_PORT"
+  fi
   if wait_for_http "$API_URL/healthz" 30; then
     info "${GREEN}API${OFF}       $API_URL   ${DIM}(docs at $API_URL/docs)${OFF}"
   else
@@ -255,8 +312,18 @@ cmd_api() {
 cmd_web() {
   ensure_setup
   command -v npm >/dev/null 2>&1 || die "npm is not installed. Install Node 18 or newer."
+  if running web && mode_changed web; then
+    say "The dashboard was started as $(cat "$RUN_DIR/web.mode" 2>/dev/null || echo http), and is wanted as $MODE: restarting it"
+    stop_one web
+  fi
   say "Starting the dashboard"
-  start_one web "$WEB_PORT" npm --prefix frontend run dev -- --port "$WEB_PORT" --strictPort
+  if [ "$MODE" = https ]; then
+    ensure_certs
+    start_one web "$WEB_PORT" env VITE_API_URL="$API_URL" CERBERUS_TLS_KEY="$CERTS_DIR/localhost.key" \
+      CERBERUS_TLS_CERT="$CERTS_DIR/localhost.pem" npm --prefix frontend run dev -- --port "$WEB_PORT" --strictPort
+  else
+    start_one web "$WEB_PORT" npm --prefix frontend run dev -- --port "$WEB_PORT" --strictPort
+  fi
   if wait_for_http "$WEB_URL" 45; then
     info "${GREEN}Dashboard${OFF} $WEB_URL"
   else
@@ -289,6 +356,34 @@ cmd_start() {
 }
 
 # --- everything else -----------------------------------------------------------------------
+
+set_env() { # set_env KEY VALUE: replace or add a line in .env, keeping it private
+  local key="$1" value="$2" tmp
+  [ -f .env ] || : > .env
+  tmp="$(mktemp)"; chmod 600 "$tmp"
+  grep -vE "^${key}=" .env > "$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" .env; chmod 600 .env
+}
+
+cmd_https() {
+  case "${1:-on}" in
+    on)
+      say "Local HTTPS"
+      "$ROOT/scripts/local_https.sh" setup
+      set_env LOCAL_HTTPS 1
+      say "Turned on. Start it with ./run.sh (it restarts the API and dashboard if they are running)"
+      info "Dashboard          https://localhost:$WEB_PORT"
+      info "API                https://localhost:$API_PORT"
+      info "Redirect URIs to register with each provider:"
+      for p in vercel netlify cloudflare; do info "  https://localhost:$API_PORT/api/v1/providers/$p/callback"; done
+      ;;
+    off) set_env LOCAL_HTTPS 0; say "Turned off. Run ./run.sh to go back to http://localhost" ;;
+    untrust) "$ROOT/scripts/local_https.sh" untrust ;;
+    status) "$ROOT/scripts/local_https.sh" status; info "mode: $MODE" ;;
+    *) die "usage: ./run.sh https [on|off|status|untrust]" ;;
+  esac
+}
 
 cmd_status() {
   local api_pid web_pid
@@ -393,6 +488,7 @@ ${BOLD}Cerberus${OFF} - attack surface and exploitability intelligence
   ${BOLD}./run.sh setup${OFF}            install dependencies, create .env and the database
   ${BOLD}./run.sh api${OFF}              the API only
   ${BOLD}./run.sh web${OFF}              the dashboard only
+  ${BOLD}./run.sh https${OFF} [off]      serve over https://localhost (for OAuth providers that need it)
   ${BOLD}./run.sh test${OFF}             tests, lint and the dashboard build
 
   ${BOLD}./run.sh scan${OFF} <domain>    scan from the command line (you attest authorization)
@@ -412,6 +508,7 @@ case "${1:-start}" in
   web|frontend|ui) shift || true; cmd_web ;;
   stop|down)       shift || true; cmd_stop ;;
   restart)         shift || true; cmd_stop; cmd_start ;;
+  https)           shift || true; cmd_https "$@" ;;
   status|ps)       shift || true; cmd_status ;;
   logs|log)        shift || true; cmd_logs "$@" ;;
   test|check)      shift || true; cmd_test ;;
