@@ -20,6 +20,9 @@ landing/dist/
 # Docker
 *.pid
 
+# Local HTTPS certificates and the private key of the dev CA (scripts/local_https.sh)
+.certs/
+
 # run.sh runtime state (pids and logs of the local dev processes)
 .run/
 
