@@ -1,0 +1,6 @@
+<svg width="576" height="102" viewBox="0 0 576 102" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M0 63C0 49.2 7.1 37.1 17.8 30.1C23.8 26.2 31.0 23.9 38.8 23.9V102C31.0 102 23.8 99.7 17.8 95.8C7.1 88.9 0 76.8 0 63Z" fill="#0C0C0C"/>
+  <path d="M46 30.1C38.6 37.1 33.6 49.2 33.6 63C33.6 76.8 38.6 88.9 46 95.8C52 99.7 58.5 102 65 102V23.9C58.5 23.9 52 26.2 46 30.1Z" fill="#0C0C0C"/>
+  <path d="M73 30.1C66 37.1 61.5 49.2 61.5 63C61.5 76.8 66 88.9 73 95.8C78.5 99.7 84.5 102 91 102V23.9C84.5 23.9 78.5 26.2 73 30.1Z" fill="#0C0C0C"/>
+  <text x="115" y="83" font-family="'Space Grotesk', system-ui, -apple-system, sans-serif" font-weight="800" font-size="82" letter-spacing="-0.03em" fill="#0C0C0C">cerberus</text>
+</svg>

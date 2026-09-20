@@ -1,0 +1,7 @@
+<svg width="145" height="36" viewBox="0 0 145 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M14 6H19C22.3 6 25 8.7 25 12V16H18C15.8 16 14 14.2 14 12V6Z" fill="#888"/>
+      <path d="M16 28H11C7.7 28 5 25.3 5 22V18H12C14.2 18 16 19.8 16 22V28Z" fill="#F97316"/>
+      <circle cx="17" cy="9" r="1.2" fill="white"/>
+      <circle cx="13" cy="25" r="1.2" fill="white"/>
+      <text x="33" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">Python 3.14</text>
+    </svg>

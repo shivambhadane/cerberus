@@ -1,0 +1,5 @@
+<svg width="130" height="36" viewBox="0 0 130 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 7H26V29H4V7Z" stroke="#888" stroke-width="2" fill="none"/>
+      <path d="M10 23V13L20 23V13" stroke="#F97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="34" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">NVD NIST</text>
+    </svg>
