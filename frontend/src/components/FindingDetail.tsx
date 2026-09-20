@@ -1,87 +1,157 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { ApiError, getFinding, updateFindingStatus } from "../api";
-import type { FindingDetail as Detail } from "../types";
-import { ExploitBadge, RiskScore } from "./RiskScore";
+import { formatDate, fixed1, percent } from "../lib/format";
+import { toHash } from "../lib/router";
+import type { Criticality, FindingDetail as Detail } from "../types";
+import { CriticalityEditor } from "./CriticalityEditor";
+import { Banner, DetectionBadge, ErrorBanner, ExploitBadge, RiskScore, SkeletonRows, StatusBadge } from "./ui";
 
-const STATUSES = ["open", "acknowledged", "resolved", "false_positive"];
+const STATUSES = [
+  { value: "open", label: "Open" },
+  { value: "acknowledged", label: "Acknowledged" },
+  { value: "resolved", label: "Resolved" },
+  { value: "false_positive", label: "False positive" },
+];
 
-export function FindingDetail({ findingId, onStatusChange }: {
+export function FindingDetail({
+  findingId,
+  onClose,
+  onChanged,
+}: {
   findingId: string;
-  onStatusChange: () => void;
+  onClose: () => void;
+  onChanged: () => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const heading = useRef<HTMLHeadingElement>(null);
+  const statusId = useId();
 
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
     setDetail(null);
     setError(null);
-    getFinding(findingId)
-      .then((d) => active && setDetail(d))
-      .catch((e: ApiError) => active && setError(e.message));
-    return () => {
-      active = false;
-    };
+    setNotice("");
+    getFinding(findingId, controller.signal)
+      .then(setDetail)
+      .catch((e: ApiError) => e.name !== "AbortError" && setError(e));
+    return () => controller.abort();
   }, [findingId]);
+
+  // Move focus into the panel once it has content, so a keyboard user lands on it.
+  useEffect(() => {
+    if (detail) heading.current?.focus();
+  }, [detail?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function changeStatus(status: string) {
     setSaving(true);
     try {
       setDetail(await updateFindingStatus(findingId, status));
-      onStatusChange();
+      setNotice(`Status set to ${status.replace("_", " ")}.`);
+      onChanged();
     } catch (e) {
-      setError((e as ApiError).message);
+      setError(e as ApiError);
     } finally {
       setSaving(false);
     }
   }
 
-  if (error) return <div className="panel detail banner error">{error}</div>;
-  if (!detail) return <div className="panel detail dim">Loading…</div>;
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") onClose();
+  };
 
   return (
-    <div className="panel detail">
-      <h2>{detail.cve_id}</h2>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
-        <RiskScore score={detail.risk_score} />
-        <ExploitBadge kev={detail.kev_listed} poc={detail.has_public_exploit} />
-        <span className="badge status">{detail.status}</span>
-      </div>
+    <aside className="panel detail" id="finding-detail" aria-label="Finding detail" onKeyDown={onKeyDown}>
+      {error && <ErrorBanner error={error} />}
+      {!detail && !error && <SkeletonRows rows={6} />}
+      {detail && (
+        <div className="stack">
+          <div className="cluster" style={{ justifyContent: "space-between" }}>
+            <h2 ref={heading} tabIndex={-1} className="mono">{detail.cve_id}</h2>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+              Close<span className="sr-only"> finding detail</span>
+            </button>
+          </div>
 
-      <dl>
-        <dt>Asset</dt>
-        <dd>{detail.asset.hostname}:{detail.asset.port}</dd>
-        <dt>CVSS</dt>
-        <dd>{detail.cvss_score?.toFixed(1) ?? "—"}</dd>
-        <dt>EPSS</dt>
-        <dd>{detail.epss_score !== null ? `${(detail.epss_score * 100).toFixed(1)}%` : "—"}</dd>
-        <dt>KEV added</dt>
-        <dd>{detail.kev_date_added ?? "—"}</dd>
-        <dt>Criticality</dt>
-        <dd>{detail.asset_criticality ?? "—"}</dd>
-      </dl>
+          <div className="cluster">
+            <RiskScore score={detail.risk_score} />
+            <ExploitBadge kev={detail.kev_listed} poc={detail.has_public_exploit} />
+            <DetectionBadge method={detail.detection_method} />
+            <StatusBadge status={detail.status} />
+          </div>
 
-      {detail.reasoning && (
-        <p className="reasoning" style={{ marginBottom: 14 }}>
-          <strong className="dim">Why this rank: </strong>
-          {detail.reasoning}
-        </p>
+          <dl className="kv">
+            <dt>Asset</dt>
+            <dd>{detail.asset.hostname}:{detail.asset.port}</dd>
+            <dt>CVSS</dt>
+            <dd>{fixed1(detail.cvss_score)}</dd>
+            <dt>EPSS</dt>
+            <dd>{percent(detail.epss_score)}</dd>
+            <dt>KEV added</dt>
+            <dd>{detail.kev_date_added ?? "Not listed"}</dd>
+            <dt>Found by</dt>
+            <dd>{detail.detected_by_tool ?? "version match"}</dd>
+            <dt>Detected</dt>
+            <dd>{formatDate(detail.detected_at)}</dd>
+          </dl>
+
+          <section aria-labelledby={`${statusId}-crit`}>
+            <h3 id={`${statusId}-crit`} className="field-label" style={{ marginBottom: "var(--space-2)" }}>Asset criticality</h3>
+            <CriticalityEditor
+              asset={{
+                id: detail.asset.id,
+                hostname: detail.asset.hostname,
+                port: detail.asset.port,
+                criticality: (detail.asset_criticality as Criticality | null) ?? null,
+                criticality_reason: detail.asset_criticality_reason,
+                criticality_source: detail.asset_criticality_source,
+              }}
+              onSaved={() => {
+                setNotice("Criticality saved. This asset's findings have been re-ranked.");
+                onChanged();
+                getFinding(findingId).then(setDetail).catch(() => undefined);
+              }}
+            />
+          </section>
+
+          {detail.reasoning && (
+            <p className="reasoning-text">
+              <strong>Why this rank. </strong>
+              {detail.reasoning}
+            </p>
+          )}
+          {detail.evidence && (
+            <p className="reasoning-text">
+              <strong>How it was found. </strong>
+              {detail.evidence}
+            </p>
+          )}
+
+          <div className="field">
+            <label className="field-label" htmlFor={statusId}>Finding status</label>
+            <select id={statusId} className="select" value={detail.status} disabled={saving} onChange={(e) => void changeStatus(e.target.value)}>
+              {STATUSES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div role="status" aria-live="polite">
+            {notice && <Banner tone="success">{notice}</Banner>}
+          </div>
+
+          {detail.description && <p className="reasoning-text">{detail.description}</p>}
+
+          <div className="detail-actions">
+            <a className="btn btn-secondary btn-sm" href={toHash("evidence", { target: `${detail.asset.hostname}:${detail.asset.port}` })}>
+              View evidence for this asset
+            </a>
+          </div>
+        </div>
       )}
-
-      <div className="row" style={{ marginBottom: 14 }}>
-        <select
-          value={detail.status}
-          disabled={saving}
-          onChange={(e) => changeStatus(e.target.value)}
-        >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </div>
-
-      {detail.description && <p className="desc">{detail.description}</p>}
-    </div>
+    </aside>
   );
 }

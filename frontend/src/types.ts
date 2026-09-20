@@ -1,5 +1,6 @@
 export interface Finding {
   id: string;
+  asset_id: string;
   asset: string;
   cve_id: string;
   cvss_score: number | null;
@@ -9,15 +10,22 @@ export interface Finding {
   risk_score: number | null;
   status: string;
   reasoning: string | null;
+  detection_method: string;
+  detected_by_tool: string | null;
   detected_at: string;
 }
 
 export interface FindingDetail extends Omit<Finding, "asset"> {
   asset: { id: string; hostname: string; port: number };
+  asset_criticality_source: "heuristic" | "manual" | null;
+  asset_criticality_reason: string | null;
   kev_date_added: string | null;
   has_public_exploit: boolean;
   description: string | null;
+  evidence: string | null;
 }
+
+export type Criticality = "low" | "medium" | "high" | "critical";
 
 export interface Asset {
   id: string;
@@ -26,6 +34,11 @@ export interface Asset {
   port: number;
   protocol: string;
   technology: string | null;
+  discovered_by_tool: string | null;
+  criticality: Criticality | null;
+  criticality_reason: string | null;
+  criticality_source: "heuristic" | "manual" | null;
+  finding_count: number;
   first_seen_at: string;
   last_seen_at: string;
 }
@@ -36,16 +49,90 @@ export interface SourceStatus {
   record_count: number;
 }
 
+export interface Observation {
+  id: string;
+  scan_id: string;
+  kind: string;
+  target: string;
+  source_tool: string;
+  source_version: string | null;
+  data: Record<string, unknown>;
+  observed_at: string;
+}
+
 export interface Scan {
   scan_id: string;
   target_domain: string;
+  profile: string;
   status: string;
   started_at: string;
   completed_at: string | null;
   error: string | null;
+  warnings: string[];
+  observation_count?: number;
 }
 
-export interface FindingFilters {
-  kevOnly: boolean;
-  minRiskScore: string;
+export interface Page<T> {
+  total: number;
+  items: T[];
+}
+
+export interface FindingQuery {
+  q?: string;
+  status?: string;
+  detection?: string;
+  assetId?: string;
+  kevOnly?: boolean;
+  minRisk?: string;
+  sort?: string;
+  order?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface Overview {
+  findings: {
+    active: number;
+    actively_exploited: number;
+    confirmed: number;
+    by_risk_band: Record<string, number>;
+    by_detection: Record<string, number>;
+  };
+  assets: { total: number; by_criticality: Record<string, number> };
+  scans_total: number;
+  last_scan: Scan | null;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  email_verified: boolean;
+  created_at: string;
+}
+
+export interface AuthResult {
+  user: User;
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+export type VerificationStatus = "pending" | "verified" | "failed";
+
+export interface Domain {
+  id: string;
+  domain: string;
+  verification_status: VerificationStatus;
+  verification_method: string;
+  verified_at: string | null;
+  created_at: string;
+  verification: { method: string; record_type: string; record_name: string; record_value: string };
+}
+
+export interface VerifyResult {
+  verified: boolean;
+  reason: "verified" | "record_not_found" | "token_mismatch" | "lookup_failed";
+  detail: string;
+  domain: Domain;
 }
