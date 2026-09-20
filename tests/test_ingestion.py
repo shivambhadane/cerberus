@@ -97,3 +97,48 @@ def test_criticality_heuristics():
     assert infer_criticality("test.example.com", 443)[0] == "low"
     assert infer_criticality("example.com", 5432)[0] == "high"
     assert infer_criticality("example.com", 443)[0] == "medium"
+
+
+# --- ownership: an asset is one host:port per owner ---------------------------------------------
+
+def test_two_users_holding_the_same_host_get_separate_assets(session, make_user):
+    """Regression for the multi-user move: dedupe used to be per tenant, so the second user's scan
+    would have found and overwritten the first user's row."""
+    tenant_id = make_tenant(session)
+    alice, bob = make_user("alice@example.com"), make_user("bob@example.com")
+
+    nginx, apache = result_for(technology="nginx/1.24.0"), result_for(technology="apache/2.4.49")
+    a = ingest_assets(session, tenant_id, "scan-a", nginx, user_id=alice.id)[0]
+    b = ingest_assets(session, tenant_id, "scan-b", apache, user_id=bob.id)[0]
+
+    assert a.id != b.id and session.query(Asset).count() == 2
+    assert (a.user_id, b.user_id) == (alice.id, bob.id)
+    assert a.technology == "nginx/1.24.0"  # bob's scan did not touch alice's row
+
+
+def test_a_users_rescan_refreshes_their_own_asset_not_a_duplicate(session, make_user):
+    tenant_id = make_tenant(session)
+    user = make_user()
+    ingest_assets(session, tenant_id, "scan-1", result_for(), user_id=user.id)
+    ingest_assets(session, tenant_id, "scan-2", result_for(), user_id=user.id)
+    assert session.query(Asset).filter_by(user_id=user.id).count() == 1
+
+
+def test_new_assets_record_their_owner_and_domain(session, make_user):
+    tenant_id = make_tenant(session)
+    user = make_user()
+    asset = ingest_assets(session, tenant_id, "scan-1", result_for(), user_id=user.id, domain_id="dom-1")[0]
+    assert (asset.user_id, asset.domain_id) == (user.id, "dom-1")
+
+
+def test_an_unowned_scan_never_touches_an_owned_asset(session, make_user):
+    """The CLI without --owner has no user; it must not adopt or update someone's row."""
+    tenant_id = make_tenant(session)
+    user = make_user()
+    nginx, apache = result_for(technology="nginx/1.24.0"), result_for(technology="apache/2.4.49")
+    owned = ingest_assets(session, tenant_id, "scan-1", nginx, user_id=user.id)[0]
+    unowned = ingest_assets(session, tenant_id, "scan-2", apache)[0]
+
+    assert unowned.id != owned.id and unowned.user_id is None
+    assert owned.technology == "nginx/1.24.0"
+    assert session.query(Asset).count() == 2
