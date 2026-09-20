@@ -201,6 +201,13 @@ class DeploymentProvider(ABC):
     @abstractmethod
     def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None) -> ProviderTokens: ...
 
+    # True when a person may connect with an access token they create on the platform themselves, instead of
+    # (or where they cannot use) the OAuth flow. Off unless a provider opts in.
+    supports_token = False
+
+    def tokens_from_pasted(self, token: str, options: dict[str, str | None]) -> ProviderTokens:
+        raise ProviderError("unsupported", f"{self.label} does not support access tokens.")
+
     def refresh(self, refresh_token: str) -> ProviderTokens:
         raise ProviderError("unsupported", f"{self.label} tokens cannot be refreshed.")
 

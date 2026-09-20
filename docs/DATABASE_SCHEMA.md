@@ -266,7 +266,7 @@ A user's connection to a deployment-platform account (Vercel, Netlify, Cloudflar
 | `refresh_token_encrypted` | text, nullable | as above; only for providers that issue refresh tokens |
 | `token_expires_at` | timestamptz, nullable | when the access token stops working |
 | `scopes` | text | the scopes granted, space-separated, for display |
-| `extra` | json | non-secret details needed to call the provider later (a Vercel team id). Never a token |
+| `extra` | json | non-secret details needed to call the provider later (a Vercel team id), and `method`: `"token"` when the person pasted an access token (absent for OAuth). Never a token |
 | `created_at`, `updated_at` | timestamptz | |
 
 Constraint: `(user_id, provider, provider_account_id)` is unique, so reconnecting the same account updates its row instead of adding another. **Tokens are never returned by the API or sent to the browser**, and the columns hold ciphertext only: reading this table (a backup, a leaked dump) does not reveal a usable credential without `PROVIDER_TOKEN_ENCRYPTION_KEY`, which is not stored here. Deleting a connection (disconnect) deletes its tokens.

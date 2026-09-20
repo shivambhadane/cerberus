@@ -1,8 +1,10 @@
 import { useEffect, useId, useState } from "react";
+import type { FormEvent } from "react";
 import {
   ApiError,
   addPlatformTarget,
   connectProvider,
+  connectWithToken,
   disconnectConnection,
   listConnectionProjects,
 } from "../api";
@@ -24,6 +26,17 @@ const PROVIDER_NOTES: Record<string, string> = {
     "Netlify has no read-only access level. Cerberus only reads your site list, but the token Netlify issues can do more than that.",
 };
 
+/** Where to make an access token, and what to warn about, for the providers that accept one. */
+const TOKEN_HELP: Record<string, { where: string; warning: string; team: string }> = {
+  vercel: {
+    where:
+      "In Vercel open Account Settings → Tokens → Create Token. Limit its scope to the team that owns the app and give it a short expiry.",
+    warning:
+      "Vercel has no read-only token, so this one can do more than Cerberus needs. Cerberus only reads project names and addresses, keeps the token encrypted on the server, and never shows it again. Delete the token on Vercel when you are done.",
+    team: "Only if the token is limited to a team: Team Settings → General → Team ID (it starts with team_). Leave it empty for a personal account.",
+  },
+};
+
 const message = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 
 /** Only ever send the browser to the provider over HTTPS, whatever the API said. */
@@ -31,6 +44,155 @@ function goToProvider(url: string) {
   const target = new URL(url);
   if (target.protocol !== "https:") throw new Error("The provider address was not HTTPS.");
   window.location.assign(target.toString());
+}
+
+/** Official SVG mark for each deployment provider. */
+export function ProviderLogo({ provider, size = 20 }: { provider: string; size?: number }) {
+  if (provider === "vercel") {
+    return (
+      <svg
+        className="provider-icon provider-icon-vercel"
+        viewBox="0 0 1155 1000"
+        fill="currentColor"
+        width={size}
+        height={size}
+        aria-hidden="true"
+      >
+        <path d="M577.344 0L1154.69 1000H0L577.344 0Z" />
+      </svg>
+    );
+  }
+  if (provider === "netlify") {
+    return (
+      <svg
+        className="provider-icon provider-icon-netlify"
+        viewBox="0 0 150 150"
+        fill="none"
+        width={size}
+        height={size}
+        aria-hidden="true"
+      >
+        <path d="M43.91,116.64h-1.34l-6.67-6.67v-1.34l10.19-10.19h7.06l.94,.94v7.06l-10.19,10.19Z" fill="#05bdba" />
+        <path d="M35.9,41.22v-1.34l6.67-6.67h1.34l10.19,10.19v7.06l-.94,.94h-7.06l-10.19-10.19Z" fill="#05bdba" />
+        <path d="M94.6,95.14h-9.7l-.81-.81v-22.71c0-4.04-1.59-7.17-6.46-7.28-2.51-.07-5.38,0-8.44,.12l-.46,.47v29.39l-.81,.81h-9.7l-.81-.81V55.53l.81-.81h21.83c8.48,0,15.36,6.88,15.36,15.36v24.25l-.81,.81Z" fill="#ffffff" />
+        <path d="M45.29,80.6H6.49l-.81-.81v-9.72l.81-.81H45.29l.81,.81v9.72l-.81,.81Z" fill="#05bdba" />
+        <path d="M146.34,80.6h-38.8l-.81-.81v-9.72l.81-.81h38.8l.81,.81v9.72l-.81,.81Z" fill="#05bdba" />
+        <path d="M70.82,42.6V13.5l.81-.81h9.72l.81,.81v29.1l-.81,.81h-9.72l-.81-.81Z" fill="#05bdba" />
+        <path d="M70.82,136.36v-29.1l.81-.81h9.72l.81,.81v29.1l-.81,.81h-9.72l-.81-.81Z" fill="#05bdba" />
+      </svg>
+    );
+  }
+  if (provider === "cloudflare") {
+    return (
+      <svg
+        className="provider-icon provider-icon-cloudflare"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        width={size}
+        height={size}
+        aria-hidden="true"
+      >
+        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
+      </svg>
+    );
+  }
+  return <span>{provider[0]?.toUpperCase()}</span>;
+}
+
+/**
+ * Connect with an access token instead of OAuth. The token is typed here once, sent to the server, proved by
+ * using it there, and stored encrypted; it is cleared from the page as soon as it has been sent.
+ */
+function TokenForm({
+  info,
+  renewing,
+  onConnected,
+}: {
+  info: ProviderInfo;
+  renewing: boolean;
+  onConnected: (connection: Connection) => void;
+}) {
+  const tokenId = useId();
+  const teamId = useId();
+  const hintId = useId();
+  const help = TOKEN_HELP[info.provider];
+  const [token, setToken] = useState("");
+  const [team, setTeam] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!token.trim()) {
+      setError("Paste your access token first.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const connection = await connectWithToken(info.provider, token, team);
+      setToken(""); // sent; it must not linger in the page
+      onConnected(connection);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="token-form stack" onSubmit={(e) => void submit(e)} noValidate>
+      {help && <p className="field-hint">{help.where}</p>}
+      <div className="field">
+        <label className="field-label" htmlFor={tokenId}>
+          {info.label} access token
+        </label>
+        <input
+          id={tokenId}
+          className="input mono"
+          type="password"
+          name="access-token"
+          value={token}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          aria-describedby={hintId}
+          onChange={(e) => setToken(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor={teamId}>
+          Team ID <span className="muted">(optional)</span>
+        </label>
+        <input
+          id={teamId}
+          className="input mono"
+          value={team}
+          placeholder="team_…"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setTeam(e.target.value)}
+        />
+        {help && <span className="field-hint">{help.team}</span>}
+      </div>
+      {help && (
+        <p id={hintId} className="field-hint">
+          {help.warning}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="form-error">
+          {error}
+        </p>
+      )}
+      <div className="cluster">
+        <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
+          {busy ? "Checking…" : renewing ? "Replace token" : "Connect with token"}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 function ProjectRow({
@@ -108,6 +270,7 @@ function ProjectPicker({
   onAdded: (domain: Domain) => void;
   onReconnect: () => void;
 }) {
+  const byToken = connection.method === "token";
   const id = useId();
   const { data, error, loading, reload } = useApi((signal) => listConnectionProjects(connection.id, signal), [
     connection.id,
@@ -126,7 +289,7 @@ function ProjectPicker({
         {error.message}
         <div className="banner-actions">
           <button type="button" className="btn btn-primary btn-sm" onClick={onReconnect}>
-            Reconnect
+            {byToken ? "Enter a new token" : "Reconnect"}
           </button>
         </div>
       </Banner>
@@ -184,6 +347,7 @@ function ConnectionRow({
   onAdded,
   onChanged,
   onError,
+  onRenewToken,
 }: {
   info: ProviderInfo;
   connection: Connection;
@@ -191,6 +355,7 @@ function ConnectionRow({
   onAdded: (domain: Domain) => void;
   onChanged: (announcement: string) => void;
   onError: (text: string) => void;
+  onRenewToken: () => void;
 }) {
   const [open, setOpen] = useState(startOpen);
   const [confirming, setConfirming] = useState(false);
@@ -203,6 +368,11 @@ function ConnectionRow({
   }, [startOpen]);
 
   async function reconnect() {
+    // A token connection is renewed by pasting a new token, not by sending the person to the platform.
+    if (connection.method === "token") {
+      onRenewToken();
+      return;
+    }
     try {
       goToProvider((await connectProvider(info.provider)).authorization_url);
     } catch (e) {
@@ -230,7 +400,10 @@ function ConnectionRow({
       <div className="connection-row">
         <span className="connection-name">
           <strong>{connection.label}</strong>
-          <span className="muted">Connected {formatDate(connection.connected_at)}</span>
+          <span className="muted">
+            Connected {formatDate(connection.connected_at)}
+            {connection.method === "token" ? " with an access token" : ""}
+          </span>
         </span>
         <span className="cluster">
           <button
@@ -285,8 +458,15 @@ function ProviderCard({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [justConnected, setJustConnected] = useState<string | null>(null);
   const titleId = useId();
+  const tokenPanelId = useId();
   const connected = info.connections.length > 0;
+  const canOAuth = info.configured;
+  const canToken = Boolean(info.token_paste);
+  const usable = canOAuth || canToken;
+  const renewing = info.connections.some((c) => c.method === "token");
 
   async function connect() {
     setStarting(true);
@@ -303,13 +483,13 @@ function ProviderCard({
     <article className="panel provider-card stack" aria-labelledby={titleId}>
       <div className="provider-head">
         <span className={`provider-mark provider-${info.provider}`} aria-hidden="true">
-          {info.label[0]}
+          <ProviderLogo provider={info.provider} size={22} />
         </span>
         <div className="provider-title">
           <h3 id={titleId}>{info.label}</h3>
           <span className="field-hint">Verifies {PLATFORM_ADDRESS[info.provider]} addresses</span>
         </div>
-        {!info.configured ? (
+        {!usable ? (
           <Badge tone="warning">Not set up on this server</Badge>
         ) : connected ? (
           <Badge tone="success">Connected</Badge>
@@ -318,13 +498,13 @@ function ProviderCard({
         )}
       </div>
 
-      {!info.configured && (
+      {!usable && (
         <p className="field-hint">
           The person running this Cerberus has not registered a {info.label} OAuth app yet, so it can’t be used
           here. The setup steps are in docs/DEPLOYMENT.md.
         </p>
       )}
-      {info.configured && PROVIDER_NOTES[info.provider] && (
+      {canOAuth && PROVIDER_NOTES[info.provider] && (
         <p className="field-hint">{PROVIDER_NOTES[info.provider]}</p>
       )}
 
@@ -335,25 +515,55 @@ function ProviderCard({
               key={connection.id}
               info={info}
               connection={connection}
-              startOpen={openConnection === connection.id}
+              startOpen={openConnection === connection.id || justConnected === connection.id}
               onAdded={onAdded}
               onChanged={onChanged}
               onError={setError}
+              onRenewToken={() => setTokenOpen(true)}
             />
           ))}
         </ul>
       )}
 
-      {info.configured && (
+      {usable && (
         <div className="cluster">
-          <button
-            type="button"
-            className={connected ? "btn btn-sm" : "btn btn-primary"}
-            disabled={starting}
-            onClick={() => void connect()}
-          >
-            {starting ? "Opening…" : connected ? "Connect another account" : `Connect ${info.label}`}
-          </button>
+          {canOAuth && (
+            <button
+              type="button"
+              className={connected ? "btn btn-sm" : "btn btn-primary"}
+              disabled={starting}
+              onClick={() => void connect()}
+            >
+              {starting ? "Opening…" : connected ? "Connect another account" : `Connect ${info.label}`}
+            </button>
+          )}
+          {canToken && (
+            <button
+              type="button"
+              className={canOAuth || connected ? "btn btn-sm" : "btn btn-primary"}
+              aria-expanded={tokenOpen}
+              aria-controls={tokenPanelId}
+              onClick={() => setTokenOpen((now) => !now)}
+            >
+              {tokenOpen ? "Hide access token form" : "Use an access token"}
+            </button>
+          )}
+        </div>
+      )}
+      {canToken && (
+        <div id={tokenPanelId} hidden={!tokenOpen}>
+          {tokenOpen && (
+            <TokenForm
+              info={info}
+              renewing={renewing}
+              onConnected={(connection) => {
+                setTokenOpen(false);
+                setError(null);
+                setJustConnected(connection.id);
+                onChanged(`Connected ${connection.label} with an access token.`);
+              }}
+            />
+          )}
         </div>
       )}
       {error && (

@@ -298,6 +298,8 @@ set up on this server" and nothing else changes.
   nothing about DNS control, so it still needs the TXT record.
 - **Scan authorization is unchanged.** A platform-verified target is additionally re-checked with the platform
   just before each scan, and refused if that cannot be confirmed.
+- **Vercel without an integration:** paste a Vercel access token instead ([steps](docs/DEPLOYMENT.md#73b-vercel-without-an-integration-an-access-token)). It needs only the encryption key, but Vercel tokens are not read-only, so use one limited to a single team with a short expiry.
+- **Local HTTPS:** some platforms refuse an `http://localhost` redirect URL. `./run.sh https` serves everything over `https://localhost` with a certificate that can only vouch for localhost ([details](docs/DEPLOYMENT.md#72-redirect-callback-urls)).
 - **Disconnect** (Targets, or the Profile page's list) deletes the stored tokens and returns the targets that
   connection verified to "not verified".
 - **Honest limits:** it has been tested against fakes of each platform's documented responses, **not against a

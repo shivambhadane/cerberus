@@ -131,6 +131,8 @@ infrastructure we don't own the whole stack of." See [RULES_OF_ENGAGEMENT.md §4
         just before each scan, and refused if it cannot be.
       - Tested against fakes of each platform's documented responses, including cross-user isolation, forged and
         replayed OAuth state, and disconnect. Migrations checked on SQLite, copies of the real databases and PostgreSQL 16.
+      - Vercel can also be connected with a **pasted access token** (no integration to create or publish): same encryption,
+        ownership checks and isolation; broader token, so the UI says to scope it to one team and expire it.
       - **Not yet:** a connection to a real Vercel, Netlify or Cloudflare account has never been made, so all three
         clients are unproven against the live services. Netlify's token endpoint is undocumented and its tokens have
         no scopes; Cloudflare's Pages scope name is unpublished; a Vercel integration must be public before others can

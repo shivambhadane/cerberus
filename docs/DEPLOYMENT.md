@@ -189,10 +189,38 @@ Register exactly this with each platform, character for character (no trailing s
 | Netlify | `{PUBLIC_API_URL}/api/v1/providers/netlify/callback` |
 | Cloudflare | `{PUBLIC_API_URL}/api/v1/providers/cloudflare/callback` |
 
-For local development that is `http://localhost:8000/api/v1/providers/<provider>/callback`. Platforms
-usually insist on HTTPS for anything that is not localhost, and whether each accepts a plain-HTTP
-localhost address was not checked. If one refuses, use a tunnel with an HTTPS address and set
-`PUBLIC_API_URL` to it.
+For local development that is `http://localhost:8000/api/v1/providers/<provider>/callback`. Some
+platforms refuse an `http://` redirect URL (Cloudflare's form would not let one continue, and Vercel's may
+not accept one either), so there is a local HTTPS mode:
+
+```bash
+./run.sh https        # once: make and trust the certificate, and switch the mode on
+./run.sh              # restarts the API and the dashboard on https://localhost
+./run.sh https off    # back to plain http
+```
+
+The redirect URIs then become `https://localhost:8000/api/v1/providers/<provider>/callback`, and the
+dashboard is at `https://localhost:5173`. `./run.sh` sets `PUBLIC_API_URL`, `FRONTEND_URL`, `CORS_ORIGINS`
+and `COOKIE_SECURE=1` for the processes it starts, so `.env` needs no change. Register the `https://` URIs with
+each platform (a URI registered as `http://` will not match).
+
+Why the dashboard has to move too, not only the API: the OAuth cookie is `Secure` and `SameSite=Lax`, and browsers
+treat `http://localhost` and `https://localhost` as different sites, so an https API with an http dashboard would
+lose the cookie and every connection would end in `invalid_state`.
+
+What `scripts/local_https.sh` does, and why it is safe to trust:
+- It creates a private CA in `.certs/` (git-ignored, key mode 600) whose certificate has a **name constraint**:
+  it can vouch only for `localhost`, `127.0.0.1` and `::1`. A test confirms a certificate for `example.com` signed by
+  it is rejected, so even a stolen key could not impersonate any other site to this browser.
+- It signs a `localhost` certificate (397 days; renewed by running the script again).
+- It adds the CA to **Chrome's certificate store for your user** (`~/.pki/nssdb`). Nothing system-wide, no `sudo`.
+  Restart Chrome if it was open. Firefox has its own store: import `.certs/ca.pem` there by hand.
+- Undo it: `./run.sh https untrust` (and delete `.certs/`).
+
+Verified in real Chrome, with no certificate bypass: the dashboard and API load over https, the refresh and
+OAuth cookies are `Secure`/`httpOnly`/`SameSite=Lax`, and the OAuth cookie is sent on the callback navigation.
+Not verified: that Cloudflare or Vercel accept `https://localhost` as a redirect URL.
+For anything other than local development use a real HTTPS host, as in §4.
 
 ### 7.3 Vercel
 
@@ -212,6 +240,25 @@ carries identity, and its permissions for API requests are documented as being i
    for you. For *other* people to connect, it must be made public, which Vercel reviews.
 7. In Cerberus: Targets → Add a deployment → **Connect Vercel**, choose the team and the projects to
    share on Vercel's page, then pick a project.
+
+#### 7.3b Vercel without an integration: an access token
+
+If the integration cannot be created or installed (its install link shows a 404, or you do not want to publish one),
+Vercel can be connected with an **access token** instead. This needs **no `VERCEL_*` variables at all**, only
+`PROVIDER_TOKEN_ENCRYPTION_KEY`.
+
+1. In Vercel open **Account Settings → Tokens → Create Token**.
+2. **Scope:** pick the team that owns the app (or your personal account). **Expiration:** a short one.
+3. Copy the token (Vercel shows it once).
+4. In Cerberus: Targets → Deployment → Vercel → **Use an access token**. Paste it. If it is limited to a team, also
+   enter the **Team ID** (Team Settings → General; it starts with `team_`). Leave the Team ID empty for a personal
+   account. Click **Connect with token**.
+5. Choose a project and **Add & verify** as usual.
+
+Trade-offs, stated plainly: Vercel has no read-only token, so this one can do everything its owner can within the scope
+you chose, which is more than Cerberus needs (it only reads project names and addresses). It is stored encrypted, is never
+shown again, and disappears from Cerberus when you disconnect. Delete it on Vercel when you are done. When it expires,
+Cerberus asks for a new one (targets it verified stay verified). It has not been tried against a live Vercel account.
 
 ### 7.4 Netlify
 

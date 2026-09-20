@@ -45,7 +45,7 @@ what the screen is for.
 
 | Screen | What it is for |
 |---|---|
-| **Targets** | What you can scan, and how you prove it is yours. Choose **Custom domain** (claim it, then publish the exact DNS TXT record shown, with copy buttons and a **Check verification** button; a record that has not propagated yet is a normal state, not an error) or **Deployment** (for an app on `*.vercel.app`, `*.netlify.app` or `*.pages.dev`: connect Vercel, Netlify or Cloudflare, pick a project, **Add & verify**). A provider the server has not set up says so. A target verified through a platform shows "via Vercel" (or the like) instead of a DNS record. Tokens never reach the browser: it only ever sees that an account is connected. See [../docs/API.md §4](../docs/API.md#4-deployment-providers). |
+| **Targets** | What you can scan, and how you prove it is yours. Choose **Custom domain** (claim it, then publish the exact DNS TXT record shown, with copy buttons and a **Check verification** button; a record that has not propagated yet is a normal state, not an error) or **Deployment** (for an app on `*.vercel.app`, `*.netlify.app` or `*.pages.dev`: connect Vercel, Netlify or Cloudflare, pick a project, **Add & verify**). A provider the server has not set up says so. Where the server supports it (Vercel), **Use an access token** offers a paste-a-token form instead of OAuth, with the trade-off spelled out; the token is cleared from the page as soon as it is sent. A target verified through a platform shows "via Vercel" (or the like) instead of a DNS record. Tokens never reach the browser: it only ever sees that an account is connected. See [../docs/API.md §4](../docs/API.md#4-deployment-providers). |
 | **Profile** | Your photo, name, email, how you signed in and when, and the deployment accounts you have connected. The name and photo come from your sign-in provider's verified token (a Google photo follows the change you make to your Google profile on your next sign-in); with no photo, or one that fails to load, it shows your initials. Reached from your name in the top bar. |
 | **Overview** | The landing page. Four KPI cards (active findings, actively exploited, confirmed, assets), the **Top risks** as cards that open the finding, a **Risk breakdown** chart (by score band, and confirmed vs inferred), and **Recent scans**. Every number links to the list it counts. Refreshes itself while a scan is running. |
 | **Findings** | The ranked list. Search by CVE or host; filter by status, evidence (confirmed / inferred), minimum risk, actively-exploited; sort by risk, CVSS or EPSS; 25 per page. Selecting a finding opens a detail panel with the reasoning, the evidence, a status control, and the asset's criticality. |
@@ -150,10 +150,10 @@ Audited against WCAG 2.1 AA with axe-core plus manual checks; **zero axe violati
 
 ## The end-to-end test
 
-`npm run test:e2e` drives a real Chrome through 114 checks: creating an account, a failed sign-in,
+`npm run test:e2e` drives a real Chrome through 121 checks: creating an account, a failed sign-in,
 session persistence across a reload, cookie flags, signing out and back in, the shell (the brand is not a link;
-the Landing page button), the Profile page, the Targets page in both modes (including a server with no provider
-set up), claiming and verifying a domain,
+the Landing page button), the Profile page, the Targets page in both modes (a server with no OAuth app: Vercel offers an access token, Netlify and Cloudflare say
+they are not set up), claiming and verifying a domain,
 a second account that must see none of the first one's data, the skip link, sidebar navigation and
 the back button, the Overview (KPI figures, Top risks ordering and links, that both charts add up to the
 active total, Recent scans), the keyboard model, URL state, sorting,

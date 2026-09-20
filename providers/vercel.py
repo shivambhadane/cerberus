@@ -20,6 +20,7 @@ read access to: user, team, project (and nothing else).
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote, urlencode
 
 from providers.base import (
@@ -37,6 +38,7 @@ from providers.base import (
 API = "https://api.vercel.com"
 TOKEN_URL = f"{API}/v2/oauth/access_token"
 INSTALL_URL = "https://vercel.com/integrations/{slug}/new"
+_TEAM_ID = re.compile(r"^team_[A-Za-z0-9]{3,64}$")
 MAX_PROJECTS = 50  # domains are one call per project, so a listing is bounded
 
 
@@ -44,12 +46,25 @@ class VercelProvider(DeploymentProvider):
     name = "vercel"
     label = "Vercel"
 
+    # An access token (Account Settings > Tokens) is the fallback when the OAuth Integration cannot be used.
+    supports_token = True
+
     def __init__(self, client_id: str, client_secret: str, slug: str, http: ProviderHttp | None = None):
         super().__init__(client_id, client_secret, http)
         self.slug = slug
 
     def is_configured(self) -> bool:
         return bool(super().is_configured() and self.slug)
+
+    def tokens_from_pasted(self, token: str, options: dict[str, str | None]) -> ProviderTokens:
+        """A token the person made on Vercel. `team_id` is only needed when it is limited to a team."""
+        team = (options.get("team_id") or "").strip() or None
+        if team is not None and not _TEAM_ID.match(team):
+            raise ProviderError(
+                "invalid_identifier", "A Vercel team ID looks like team_ followed by letters and digits."
+            )
+        extra = {"method": "token", "team_id": team}
+        return ProviderTokens(access_token=token, scopes="access-token", extra=extra)
 
     def build_authorization_url(self, state: str, redirect_uri: str, code_challenge: str | None) -> str:
         # The redirect URI is registered on the integration, not passed here.

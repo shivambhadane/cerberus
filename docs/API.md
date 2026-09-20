@@ -256,8 +256,10 @@ The deployment providers this server supports, and the caller's connections to e
 ```
 
 `configured: false` means the operator has not registered an OAuth app (or set
-`PROVIDER_TOKEN_ENCRYPTION_KEY`) on this server, so the provider cannot be used. A connection carries
-**no token, secret or refresh token**: those never leave the server.
+`PROVIDER_TOKEN_ENCRYPTION_KEY`) on this server, so the OAuth flow cannot be used. `token_paste: true` means an
+access token can be pasted instead ([below](#post-apiv1providersprovidertoken)); it needs only the encryption key
+and is offered for Vercel. A connection's `method` is `"oauth"` or `"token"`. A connection carries **no token,
+secret or refresh token**: those never leave the server.
 
 ---
 
@@ -274,6 +276,34 @@ this browser.
 
 Errors: `503 provider_not_configured`, `429 too_many_pending` (10 unfinished flows per account),
 `400 too_many_connections` (10 per account).
+
+---
+
+### `POST /api/v1/providers/{provider}/token`
+
+Connect with an **access token** the person made on the platform, instead of OAuth. Vercel only for now
+(`token_paste` in `GET /providers` says where). It exists because Vercel's OAuth needs an *integration* the
+operator has to create and, for other people to use it, publish; a token needs none of that.
+
+**Request body:** `{ "token": "…", "team_id": "team_…" }`. `team_id` is optional and only for a token limited to
+a team; it must look like `team_` followed by letters and digits.
+
+The token is checked for shape (8–512 characters from a bearer token's alphabet; surrounding whitespace and
+quotes from copy-paste are trimmed, anything else is refused), then **used at once** to ask the platform who it
+belongs to (`GET /v2/user`). That answer, never the request, becomes the connection's account id. It is stored
+encrypted exactly like an OAuth token and **never returned, logged or shown again**. Pasting a new token for the
+same account updates the same connection, so targets it verified stay verified.
+
+**Response — `200 OK`:** a connection, with `"method": "token"`.
+
+Errors: `400 invalid_token` (wrong shape, or the platform did not accept it; the message never repeats the value),
+`400 not_supported` (a provider with no token option), `400 too_many_connections`, `404 not_found` (unknown
+provider), `429 too_many_attempts` (10 wrong tokens per hour per account; correct ones are not counted),
+`502 provider_error`, `503 provider_unavailable`, `503 provider_not_configured` (no encryption key).
+
+Everything done with a token connection (project list, Add & verify, the scan-time re-check, disconnect) goes
+through the same code and the same isolation as an OAuth one. A token that later expires or is revoked is
+`409 connection_expired`, and the dashboard asks for a new token instead of sending the person to the platform.
 
 ---
 
@@ -794,7 +824,8 @@ using DNS TXT verification, and the dashboard says so where a project lists one.
 | Provider ids are not trusted | `connection_id`, `project_id` and `hostname` come from the browser and are each re-checked: the connection must be the caller's, the project must be visible to that connection's token on the platform, and the hostname must be listed on that project. Ids are also validated before they are put in a URL path. |
 | Isolation | Another user's connection, domain or project is `404`, identical to one that does not exist. A domain can be verified by only one account at a time (the existing partial unique index), whichever proves control first. |
 | Provider 401 | A platform rejecting a stored token is `409 connection_expired`, never our own `401`, which would sign the person out of Cerberus. |
-| Rate limits | Project listing and Add & verify: 60/hour per account. Unfinished OAuth flows: 10 per account. Connections: 10 per account. |
+| Rate limits | Project listing and Add & verify: 60/hour per account. Wrong access tokens: 10/hour per account. Unfinished OAuth flows: 10 per account. Connections: 10 per account. |
+| Pasted access tokens | The one place a secret comes *from* the browser: it is typed once, sent over the same connection as any request, proved by using it, stored encrypted, and cleared from the page as soon as it is sent. No endpoint returns it, an invalid one is never echoed (validation is done in code, not by a schema that would quote it), and it is kept out of logs. |
 
 ### 4.4 Token storage
 
@@ -841,6 +872,10 @@ DNS-verified targets skip all of this.
   written from each platform's documentation and tested against faithful fakes of its responses. The
   first real connection is the real test; expect to adjust field names if a platform's response differs
   from its docs.
+- **Vercel access tokens** (the paste option) are broader than Cerberus needs: Vercel has no read-only token, so a
+  pasted one can do whatever its owner can do within its scope. Cerberus only reads project names and addresses,
+  but the person is trusting it with a powerful secret. The form says so and recommends a token limited to one
+  team with a short expiry, deleted on Vercel when finished. A token that expires must be replaced by hand.
 - **Vercel** uses an *Integration*. Vercel's newer "Sign in with Vercel" only carries identity, and its
   permissions for making API requests are documented as being in private beta. An Integration must be
   **public** (and pass Vercel's review) before people other than its creator can install it; a private
@@ -868,6 +903,8 @@ DNS-verified targets skip all of this.
 | 400 | `invalid_state` | The OAuth state was missing, unknown, used, expired or from another browser (callback only, as a redirect code). |
 | 400 | `authorization_failed` | The platform refused the authorisation code. |
 | 400 | `too_many_connections` | 10 connections per account. Disconnect one. |
+| 400 | `invalid_token` | A pasted access token was malformed or not accepted by the platform. |
+| 400 | `not_supported` | That provider has no access-token option. |
 | 400 | `not_a_platform_hostname` | Not a `*.vercel.app` / `*.netlify.app` / `*.pages.dev` address. Use DNS. |
 | 400 | `invalid_domain` | The hostname is not a valid bare domain. |
 | 403 | `ownership_not_proven` | The platform does not show that hostname on a project this account controls. |
@@ -895,6 +932,8 @@ in the scanner or scan authorization does either.
    `safe_id(...)` before putting any id in a URL path, and `raise_for_status(...)` to map errors. Do not
    override `verify_target`: it is where the two shared rules (platform hostnames only; the platform
    decides visibility) are enforced.
+   To offer the access-token option, set `supports_token = True` and implement `tokens_from_pasted`; nothing else
+   changes (storage, isolation and re-checks are shared).
 2. **Register it.** Add a branch in `providers.get_provider`, its name to `PROVIDER_NAMES` in
    `providers/__init__.py` and `core/models.py`, and its suffix to `PLATFORM_SUFFIXES` in
    `providers/base.py`. Credentials are read from `<NAME>_CLIENT_ID` and `<NAME>_CLIENT_SECRET`.

@@ -29,6 +29,7 @@ from api.schemas import (
     ProjectOut,
     ProviderInfo,
     ProviderList,
+    TokenConnect,
 )
 from core import provider_service
 from core.config import load_config
@@ -42,6 +43,8 @@ router = APIRouter(prefix="/api/v1", tags=["providers"])
 OAUTH_COOKIE = "cerberus_oauth"
 COOKIE_PATH = "/api/v1/providers"
 list_limiter = FailureLimiter(max_failures=60, window_seconds=3600)
+# Wrong tokens only: each one is a guess sent on to the platform, so this stays tight.
+token_limiter = FailureLimiter(max_failures=10, window_seconds=3600)
 
 _STATUS = {
     "invalid_state": 400, "authorization_failed": 400, "provider_not_configured": 503,
@@ -49,11 +52,13 @@ _STATUS = {
     "connection_expired": 409, "provider_unavailable": 503, "ownership_not_proven": 403,
     "not_a_platform_hostname": 400, "invalid_domain": 400, "domain_already_verified": 409,
     "not_found": 404, "ownership_lost": 403, "provider_error": 502,
+    "invalid_token": 400, "not_supported": 400,
 }
 
 
 def reset_limiters() -> None:
     list_limiter._failures.clear()
+    token_limiter._failures.clear()
 
 
 def to_api_error(exc: ProviderServiceError) -> ApiError:
@@ -87,6 +92,7 @@ def connection_out(connection: ConnectedProvider) -> ConnectionOut:
         id=connection.id, provider=connection.provider,
         label=connection.account_label or connection.provider,
         connected_at=connection.created_at, scopes=connection.scopes.split() if connection.scopes else [],
+        method="token" if (connection.extra or {}).get("method") == "token" else "oauth",
     )
 
 
@@ -120,6 +126,7 @@ def list_providers(
         provider = providers.get_provider(name)
         items.append(ProviderInfo(
             provider=name, label=provider.label, configured=keyed and provider.is_configured(),
+            token_paste=keyed and provider.supports_token,
             connections=[connection_out(c) for c in mine if c.provider == name],
         ))
     return ProviderList(providers=items)
@@ -144,6 +151,39 @@ def connect(
     options = {**_cookie_options(), "path": COOKIE_PATH}
     response.set_cookie(OAUTH_COOKIE, nonce, max_age=int(STATE_TTL.total_seconds()), **options)
     return ConnectStarted(authorization_url=url)
+
+
+@router.post("/providers/{provider}/token", response_model=ConnectionOut)
+def connect_with_token(
+    provider: str,
+    payload: TokenConnect,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+) -> ConnectionOut:
+    """Connect with an access token the person made on the platform (Vercel only for now).
+
+    The token travels in the request body once, is proved by using it, is stored encrypted, and is never
+    returned, logged or shown again. It is the fallback for when an OAuth app cannot be used; the same
+    ownership checks apply to everything done with it.
+    """
+    impl = provider_or_404(provider)
+    cipher = cipher_or_error()
+    try:
+        token_limiter.check(user.id)
+    except Throttled as exc:
+        raise ApiError(
+            429, "too_many_attempts", f"Too many attempts. Try again in {exc.retry_after} seconds.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    try:
+        connection = provider_service.connect_with_token(
+            session, user, impl, cipher, payload.token, {"team_id": payload.team_id}
+        )
+    except ProviderServiceError as exc:
+        if exc.code == "invalid_token":
+            token_limiter.record_failure(user.id)
+        raise to_api_error(exc) from None
+    return connection_out(connection)
 
 
 def _back_to_dashboard(provider: str, **params: str) -> RedirectResponse:

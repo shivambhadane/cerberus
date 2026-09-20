@@ -211,6 +211,7 @@ does **not** change the score. `score_pending_findings()` re-scores every findin
 | `GET /api/v1/enrichment/status` | KEV/EPSS freshness |
 | `POST /api/v1/domains/provider`, `POST /api/v1/domains/{id}/verify/provider` | add / verify a deployment through a connected platform account |
 | `GET /api/v1/providers`, `POST /api/v1/providers/{p}/connect`, `GET /api/v1/providers/{p}/callback` | list providers; start an OAuth flow; the platform's redirect back (no bearer token) |
+| `POST /api/v1/providers/{p}/token` | connect with a pasted access token (Vercel) |
 | `GET /api/v1/connections`, `GET /api/v1/connections/{id}/projects`, `POST /api/v1/connections/{id}/disconnect` | your connected accounts; their projects; forget one |
 
 Full contract: [docs/API.md](API.md).
@@ -304,6 +305,7 @@ Counts are test functions; parametrised tests expand to more cases (these counts
 | [test_provider_clients.py](../tests/test_provider_clients.py) (44, 68 cases) | each provider's requests and response parsing against fakes of the documented responses; platform-hostname rule; id validation |
 | [test_providers_api.py](../tests/test_providers_api.py) (42) | connect / callback / list / disconnect: state single-use, expiry, wrong browser, wrong user, replay, redirect URI, no token in any response |
 | [test_provider_ownership.py](../tests/test_provider_ownership.py) (36, 45 cases) | Add & verify: what the platform must say, forged ids, custom domains refused, first-to-verify, scan-time re-check and `ownership_lost`, DNS verification and scan authorization unchanged |
+| [test_provider_token.py](../tests/test_provider_token.py) (40 cases) | pasted access tokens: proved by using them, stored encrypted, never returned or logged, refused without being echoed, rate limited, isolated, and usable with no OAuth app configured |
 | [test_provider_isolation.py](../tests/test_provider_isolation.py) (13) | another user's connection, project, domain and state answer 404 |
 | [test_firebase_auth.py](../tests/test_firebase_auth.py) (7) | Firebase token verification, provisioning, linking, expiry; the synthetic test token is refused unless the suite enables it |
 | [test_profiles.py](../tests/test_profiles.py) (14) | the safety floor cannot be lifted |
@@ -331,6 +333,7 @@ Run: `pytest -q`. Lab: `docker compose -f lab/docker-compose.yml up -d`.
 | map a new banner name to a CPE | `PRODUCT_ALIASES` in `enrichment/sources.py` |
 | add a table or column | `core/models.py`, then an Alembic migration |
 | add an API endpoint | `api/main.py` + `api/schemas.py`, document in `docs/API.md`, call from `frontend/src/api.ts` |
+| run over https://localhost (some OAuth providers need it) | `./run.sh https`; `scripts/local_https.sh` makes and trusts the certificate |
 | add a deployment provider | `providers/<name>.py`, a branch in `providers/__init__.py`, the frontend constants: [API.md §4.8](API.md#48-how-to-add-a-provider) |
 | add a dashboard view | new file in `frontend/src/components/`, add its name to `TABS` in `lib/router.ts` and to `NAV` in `App.tsx` |
 

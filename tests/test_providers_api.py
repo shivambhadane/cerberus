@@ -318,7 +318,8 @@ def test_no_response_ever_contains_a_token_or_client_secret(world):
 def test_connections_list_shape(world):
     alice = connect(world["alice"])
     (connection,) = alice.get(f"{V1}/connections").json()
-    assert set(connection) == {"id", "provider", "label", "connected_at", "scopes"}
+    # `method` says how it was connected ("oauth" or "token"); it is a label, never a credential.
+    assert set(connection) == {"id", "provider", "label", "connected_at", "scopes", "method"}
     assert connection["provider"] == "vercel" and connection["label"] == "alice"
     listed = {p["provider"]: p for p in alice.get(f"{V1}/providers").json()["providers"]}
     assert len(listed["vercel"]["connections"]) == 1 and listed["netlify"]["connections"] == []

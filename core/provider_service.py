@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -96,6 +97,55 @@ def _map_provider_error(exc: ProviderError, provider_label: str) -> ProviderServ
 
 
 # --- connecting ---------------------------------------------------------------------------------
+
+# What a bearer token looks like. Whitespace inside one means a bad copy, so it is refused, not "fixed".
+_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9._~+/=-]{8,512}$")
+
+
+def clean_token(raw: str | None) -> str:
+    """The pasted token without the whitespace and quotes a copy-paste brings along, or `invalid_token`.
+    The message never repeats the value."""
+    token = (raw or "").strip().strip("\"'").strip()
+    if not _TOKEN_SHAPE.match(token):
+        raise ProviderServiceError(
+            "invalid_token", "That does not look like an access token. Copy it again, without spaces."
+        )
+    return token
+
+
+def connect_with_token(
+    session: Session,
+    user: User,
+    provider: DeploymentProvider,
+    cipher: TokenCipher,
+    raw_token: str | None,
+    options: dict[str, str | None],
+    now: datetime | None = None,
+) -> ConnectedProvider:
+    """Connect an account with an access token the person pasted, instead of OAuth.
+
+    The token is proved the same way an OAuth token is: it is used, right now, to ask the platform who it
+    belongs to, and that answer (never anything the browser says) becomes the connection's account id. It is
+    then stored encrypted like any other token and can never be read back.
+    """
+    now = now or datetime.now(UTC)
+    if not provider.supports_token:
+        raise ProviderServiceError(
+            "not_supported", f"{provider.label} cannot be connected with an access token."
+        )
+    token = clean_token(raw_token)
+    try:
+        tokens = provider.tokens_from_pasted(token, options)
+        account = provider.get_account(tokens)
+    except ProviderError as exc:
+        if exc.code in ("unauthorized", "forbidden", "not_found", "invalid_identifier"):
+            raise ProviderServiceError(
+                "invalid_token",
+                f"{provider.label} did not accept that token. Check that it is current and, if it is "
+                "limited to a team, that the team ID is right.",
+            ) from exc
+        raise _map_provider_error(exc, provider.label) from exc
+    return _store_connection(session, user, provider, cipher, tokens, account, now)
 
 def start_authorization(
     session: Session,
@@ -321,7 +371,8 @@ def verify_platform_target(
     """
     connection = owned_connection(session, user, connection_id)
     provider = providers.get_provider(connection.provider)
-    if not provider.is_configured():
+    # A token the person pasted needs no OAuth app on this server to be used; an OAuth connection does.
+    if (connection.extra or {}).get("method") != "token" and not provider.is_configured():
         raise ProviderServiceError(
             "provider_not_configured", f"{provider.label} is not set up on this server."
         )
