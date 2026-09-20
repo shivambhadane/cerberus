@@ -1,0 +1,24 @@
+# Secrets and local state. `COPY . .` would otherwise bake these into an image layer, where
+# anyone who can pull the image can read them.
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+*.log
+
+# Large or irrelevant to the API image
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+node_modules
+frontend
+landing
+lab
+docs
+tests
+nuclei
+nuclei-templates

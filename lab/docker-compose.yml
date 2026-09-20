@@ -1,0 +1,39 @@
+# Level 1 test lab: intentionally vulnerable services for validating Cerberus against a
+# controlled, repeatable target.
+#
+# SAFETY
+#   * Every port is bound to 127.0.0.1. Nothing here is reachable from the network, and it
+#     must stay that way: these services are deliberately exploitable.
+#   * Image tags are pinned. The vulnerability under test is a property of the version,
+#     so a floating tag would silently change what the lab proves.
+#   * Ports avoid 8080 (commonly taken) and the 5xxx/6xxx/9xxx ranges other stacks use.
+#
+# Start:  docker compose -f lab/docker-compose.yml up -d
+# Stop:   docker compose -f lab/docker-compose.yml down
+
+name: cerberus-lab
+
+services:
+  # Apache 2.4.49 with the root directory opened up: vulnerable to CVE-2021-41773
+  # (path traversal) and CVE-2021-42013 (its incomplete fix). Both are in CISA KEV.
+  httpd-2449:
+    image: httpd:2.4.49
+    ports:
+      - "127.0.0.1:18081:80"
+    volumes:
+      - ./httpd.vulnerable.conf:/usr/local/apache2/conf/httpd.conf:ro
+    labels:
+      cerberus.lab: "true"
+      cerberus.expect: "CVE-2021-41773,CVE-2021-42013"
+
+  # Apache 2.4.50 fixed CVE-2021-41773 but not CVE-2021-42013. Same vulnerable config, so
+  # a correct scanner reports one CVE here and two on 2.4.49 - a precision check.
+  httpd-2450:
+    image: httpd:2.4.50
+    ports:
+      - "127.0.0.1:18082:80"
+    volumes:
+      - ./httpd.vulnerable.conf:/usr/local/apache2/conf/httpd.conf:ro
+    labels:
+      cerberus.lab: "true"
+      cerberus.expect: "CVE-2021-42013"

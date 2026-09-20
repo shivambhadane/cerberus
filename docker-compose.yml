@@ -1,13 +1,27 @@
+# Cerberus API + PostgreSQL.
+#
+# Two secrets are REQUIRED and deliberately have no default. Compose refuses to start without
+# them, because a default like "change-me" that ships in the repo is a credential every
+# reader of the repo already knows:
+#
+#   POSTGRES_PASSWORD   database password
+#   API_SECRET_KEY      bearer token the API requires
+#
+# Set them in a `.env` file next to this one (gitignored) or in the shell. See .env.example.
+#
+# Both published ports bind to 127.0.0.1. To expose the API, put a TLS-terminating reverse
+# proxy in front of it; do not publish it on 0.0.0.0 directly. See docs/DEPLOYMENT.md.
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: cerberus
-      POSTGRES_PASSWORD: cerberus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: cerberus
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,12 +36,13 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+psycopg2://cerberus:cerberus@postgres:5432/cerberus
+      DATABASE_URL: postgresql+psycopg2://cerberus:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/cerberus
+      API_SECRET_KEY: ${API_SECRET_KEY:?set API_SECRET_KEY in .env}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
 volumes:
   postgres_data:

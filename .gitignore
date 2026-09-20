@@ -14,9 +14,14 @@ node_modules/
 .next/
 frontend/dist/
 frontend/build/
+landing/dist/
+*.tsbuildinfo
 
 # Docker
 *.pid
+
+# run.sh runtime state (pids and logs of the local dev processes)
+.run/
 
 # Data / caches
 *.db
@@ -28,3 +33,10 @@ data/
 .vscode/
 .idea/
 .DS_Store
+
+# Upstream nuclei source clone (build artefact, not part of this project)
+nuclei/
+nuclei-templates/
+
+# Scan and tool logs
+*.log
