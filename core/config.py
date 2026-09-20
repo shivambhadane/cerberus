@@ -33,6 +33,10 @@ class DiscoveryConfig:
     # target domain would otherwise permit them.
     excluded_hosts: list[str] = field(default_factory=list)
     excluded_ports: list[int] = field(default_factory=list)
+    # Permit scanning loopback/private addresses (the Docker lab, a home network).
+    # Deliberately operator-level config or a CLI flag and NEVER a request parameter: an
+    # API caller who could set this could point the server at its own internal network.
+    allow_private_addresses: bool = False
 
 
 @dataclass
@@ -74,8 +78,24 @@ class Config:
         return os.environ.get("API_SECRET_KEY", "change-me")
 
     @property
+    def access_token_minutes(self) -> int:
+        """How long an access token lives. Short, because it cannot be revoked; the refresh
+        token (which can) mints the next one."""
+        return int(os.environ.get("ACCESS_TOKEN_MINUTES", "15"))
+
+    @property
+    def refresh_token_days(self) -> int:
+        return int(os.environ.get("REFRESH_TOKEN_DAYS", "14"))
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Send the refresh cookie over HTTPS only. Off by default so http://localhost works;
+        set COOKIE_SECURE=1 in any real deployment (docs/DEPLOYMENT.md)."""
+        return os.environ.get("COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
+
+    @property
     def cors_origins(self) -> list[str]:
-        raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
+        raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
