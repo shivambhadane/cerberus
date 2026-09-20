@@ -12,6 +12,7 @@ import { ObservationsView } from "./components/ObservationsView";
 import { OverviewView } from "./components/OverviewView";
 import { ProfileView } from "./components/ProfileView";
 import { ScansView } from "./components/ScansView";
+import { TestLabsView } from "./components/TestLabsView";
 import { toHash, useRoute } from "./lib/router";
 import type { Tab } from "./lib/router";
 import type { SourceStatus, User } from "./types";
@@ -19,6 +20,7 @@ import type { SourceStatus, User } from "./types";
 const NAV: Record<Tab, { label: string; icon: IconName }> = {
   overview: { label: "Overview", icon: "overview" },
   domains: { label: "Targets", icon: "domains" },
+  labs: { label: "Test Labs", icon: "flask" },
   scans: { label: "Scans", icon: "scans" },
   findings: { label: "Findings", icon: "findings" },
   assets: { label: "Assets", icon: "assets" },
@@ -28,7 +30,7 @@ const NAV: Record<Tab, { label: string; icon: IconName }> = {
 
 /** The sidebar: what you scan, then what the scans found. Profile lives in the account area instead. */
 const NAV_GROUPS: { label: string; tabs: Tab[] }[] = [
-  { label: "Workspace", tabs: ["overview", "domains", "scans"] },
+  { label: "Workspace", tabs: ["overview", "domains", "labs", "scans"] },
   { label: "Results", tabs: ["findings", "assets", "evidence"] },
 ];
 
@@ -159,7 +161,18 @@ export default function App() {
               </div>
             ))}
           </nav>
-          <p className="sidebar-note">Cerberus only scans targets you have verified as yours.</p>
+          <div className="sidebar-footer">
+            <p className="sidebar-note">Cerberus only scans targets you have verified as yours.</p>
+            <a
+              className="sidebar-profile account-link"
+              href={toHash("profile", {})}
+              aria-current={tab === "profile" ? "page" : undefined}
+              title="Your profile"
+            >
+              <Avatar user={auth.user} size="sm" />
+              <span className="sidebar-profile-name">{displayName(auth.user)}</span>
+            </a>
+          </div>
         </aside>
 
         <div className="workspace">
@@ -168,22 +181,6 @@ export default function App() {
               Dashboard <span>/</span> <strong>{NAV[tab].label}</strong>
             </p>
             <div className="topbar-actions">
-              <a className="btn btn-sm" href="/" title="Go to the Cerberus landing page">
-                <Icon name="external" />
-                Landing page
-              </a>
-              <a
-                className="account-link"
-                href={toHash("profile", {})}
-                aria-current={tab === "profile" ? "page" : undefined}
-                title="Your profile"
-              >
-                <Avatar user={auth.user} size="sm" />
-                <span className="account-name">
-                  <span className="sr-only">Profile: </span>
-                  {displayName(auth.user)}
-                </span>
-              </a>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => void signOut()}>
                 <Icon name="signout" />
                 <span className="signout-text">Sign out</span>
@@ -196,6 +193,7 @@ export default function App() {
               {sources && <EnrichmentBanner sources={sources} quietWhenFresh={tab !== "overview"} />}
               {tab === "overview" && <OverviewView />}
               {tab === "domains" && <DomainsView />}
+              {tab === "labs" && <TestLabsView />}
               {tab === "scans" && <ScansView onScanFinished={refreshStatus} />}
               {tab === "findings" && <FindingsView />}
               {tab === "assets" && <AssetsView />}

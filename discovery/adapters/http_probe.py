@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-HTTP_PORTS = {80, 8000, 8080, 8888, 3000, 5601, 9200}
+HTTP_PORTS = {80, 8000, 8080, 8888, 3000, 5601, 9200, 18081, 18082}
 HTTPS_PORTS = {443, 8443}
 
 BANNER_PATTERNS = [

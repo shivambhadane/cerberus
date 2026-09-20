@@ -16,6 +16,10 @@
  * cookie the dashboard picks its session back up from. The Firebase sign-in itself is not covered here.
  *   - Google Chrome installed (it uses the system browser, so there is nothing to download)
  *
+ * PROVIDERS: start the API with PROVIDER_TOKEN_ENCRYPTION_KEY set and NO provider credentials (blank
+ *     VERCEL, NETLIFY and CLOUDFLARE variables in its environment), so the Targets page is checked in its
+ *     "OAuth not set up, access token available" state and nothing here can reach a real platform.
+ *
  * WARNING: it creates accounts and edits an asset's criticality. Point the API at a COPY:
  *     cp lab.db /tmp/e2e.db
  *     export DATABASE_URL=sqlite:////tmp/e2e.db
@@ -312,10 +316,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ------------------------------------------------------------------ shell and profile
   await go("overview", "Overview");
-  check("the brand in the sidebar is not a link (it used to send people to the landing page)",
-    (await page.locator(".sidebar a").evaluateAll((els) => els.filter((a) => !a.classList.contains("nav-link")).length)) === 0);
-  check("a labelled Landing page button in the top bar points at the landing page",
-    (await page.locator('header.topbar a:has-text("Landing page")').getAttribute("href")) === "/");
+  check("the brand in the sidebar is not a link",
+    (await page.locator(".sidebar .brand a").count()) === 0);
+  check("there is no Landing page option in the dashboard",
+    (await page.locator('a:has-text("Landing page")').count()) === 0);
+  check("a minimal profile component lives in the bottom-left sidebar",
+    (await page.locator(".sidebar-footer .account-link").count()) === 1);
   await page.locator(".account-link").click();
   await page.waitForSelector('h1:has-text("Profile")');
   check("the account link opens the Profile page", (await hash()).startsWith("#/profile"), await hash());
@@ -340,9 +346,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.waitForSelector("text=Add a deployment");
   await page.waitForSelector("article");
   const providerCards = await page.locator("article").allInnerTexts();
-  check("the three providers are listed", providerCards.length === 3 && ["Vercel", "Netlify", "Cloudflare"].every((n) => providerCards.some((c) => c.includes(n))));
-  check("an unconfigured provider says so and offers no Connect button",
-    providerCards.every((c) => /Not set up on this server/.test(c)) && (await page.locator('article button:has-text("Connect")').count()) === 0);
+  const providerCard = (name) => providerCards.find((c) => c.includes(name)) || "";
+  check("the three providers are listed", providerCards.length === 3 && ["Vercel", "Netlify", "Cloudflare"].every((n) => providerCard(n)));
+  check("Netlify and Cloudflare say they are not set up and offer nothing to click",
+    ["Netlify", "Cloudflare"].every((n) => /Not set up on this server/.test(providerCard(n)) && !/Connect|access token/i.test(providerCard(n).replace(/Not set up on this server/, ""))));
+  check("Vercel, with no OAuth app but an encryption key, offers an access token and no OAuth Connect",
+    /Use an access token/.test(providerCard("Vercel")) && !/Connect Vercel/.test(providerCard("Vercel")) && !/Not set up/.test(providerCard("Vercel")));
+  // the token form: opens, explains the trade-off, never shows the value, and refuses garbage locally
+  await page.getByRole("button", { name: "Use an access token" }).click();
+  await page.waitForSelector('input[name="access-token"]');
+  const tokenForm = await page.locator(".token-form").innerText();
+  check("the token form says where to make the token and warns that Vercel tokens are not read-only",
+    /Account Settings/.test(tokenForm) && /no read-only token/i.test(tokenForm));
+  check("the token field is a password field with no autofill", (await page.locator('input[name="access-token"]').getAttribute("type")) === "password" && (await page.locator('input[name="access-token"]').getAttribute("autocomplete")) === "off");
+  await axe("targets (access token form open)");
+  await page.fill('input[name="access-token"]', "not a token");
+  await page.getByRole("button", { name: "Connect with token" }).click();
+  await page.waitForSelector(".token-form [role='alert']");
+  const tokenError = await page.locator(".token-form [role='alert']").innerText();
+  check("a value that is not shaped like a token is refused, without repeating it", /does not look like an access token/.test(tokenError) && !tokenError.includes("not a token"), tokenError);
+  check("nothing was connected by that", (await page.locator("article:has-text('Vercel') .connection").count()) === 0);
+  await page.getByRole("button", { name: "Hide access token form" }).click();
   const deployText = (await page.locator("main").innerText()).replace(/\s+/g, " ");
   check("the page explains that only platform addresses can be verified this way, and a custom domain still needs DNS",
     /\*\.vercel\.app/.test(deployText) && /custom domain still needs a DNS record/.test(deployText));

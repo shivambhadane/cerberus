@@ -146,6 +146,8 @@ export interface Connection {
   label: string;
   connected_at: string;
   scopes: string[];
+  /** How it was connected: the platform's OAuth flow, or an access token the person pasted. */
+  method?: "oauth" | "token";
 }
 
 export interface ProviderInfo {
@@ -153,6 +155,8 @@ export interface ProviderInfo {
   label: string;
   /** False until the operator has registered an OAuth app and set its credentials on the server. */
   configured: boolean;
+  /** True when an access token can be pasted instead (needs only the server's encryption key). */
+  token_paste?: boolean;
   connections: Connection[];
 }
 
@@ -174,4 +178,21 @@ export interface VerifyResult {
   reason: "verified" | "record_not_found" | "token_mismatch" | "lookup_failed";
   detail: string;
   domain: Domain;
+}
+
+export interface TestbedTarget {
+  id: string;
+  name: string;
+  category: "docker" | "public";
+  domain: string;
+  url?: string;
+  ports?: number[];
+  docker_command?: string;
+  docker_teardown?: string;
+  description: string;
+  vulnerabilities: string[];
+  tags: string[];
+  provider_disclaimer?: string;
+  already_added: boolean;
+  domain_id?: string | null;
 }

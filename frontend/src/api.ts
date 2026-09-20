@@ -20,6 +20,7 @@ import type {
   ProviderInfo,
   Scan,
   SourceStatus,
+  TestbedTarget,
   User,
   VerifyResult,
 } from "./types";
@@ -246,6 +247,14 @@ export const addDomain = (domain: string) =>
 export const verifyDomain = (id: string) =>
   request<VerifyResult>(`/api/v1/domains/${id}/verify`, { method: "POST" });
 
+export async function listTestbeds(signal?: AbortSignal): Promise<TestbedTarget[]> {
+  const data = await request<{ total: number; testbeds: TestbedTarget[] }>("/api/v1/domains/testbeds", { signal });
+  return data.testbeds;
+}
+
+export const addTestbed = (targetId: string) =>
+  request<Domain>(`/api/v1/domains/testbeds/${targetId}`, { method: "POST" });
+
 /* ---- Deployment providers (Vercel, Netlify, Cloudflare Pages) -----------------------------
  * The browser never sees a provider token or client secret. `connectProvider` returns only the
  * provider's own authorisation URL; the provider then redirects to the API, which completes the
@@ -257,6 +266,16 @@ export const listProviders = async (signal?: AbortSignal): Promise<ProviderInfo[
 
 export const connectProvider = (provider: string) =>
   request<{ authorization_url: string }>(`/api/v1/providers/${provider}/connect`, { method: "POST" });
+
+/**
+ * Connect with an access token the person made on the platform. The token goes to the server once, is proved
+ * by using it, and is stored encrypted; it is never returned, so nothing here can read it back.
+ */
+export const connectWithToken = (provider: string, token: string, teamId?: string) =>
+  request<Connection>(`/api/v1/providers/${provider}/token`, {
+    method: "POST",
+    body: JSON.stringify({ token, team_id: teamId?.trim() || null }),
+  });
 
 export const listConnectionProjects = (connectionId: string, signal?: AbortSignal) =>
   request<ProjectList>(`/api/v1/connections/${connectionId}/projects`, { signal });

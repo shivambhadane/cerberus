@@ -4,6 +4,7 @@ import { toHash } from "../lib/router";
 import { useApi } from "../lib/useApi";
 import type { User } from "../types";
 import { Avatar, displayName } from "./Avatar";
+import { ProviderLogo } from "./DeploymentProviders";
 import { Icon } from "./icons";
 import { Badge, EmptyState, ErrorBanner, PageHeader, SkeletonRows } from "./ui";
 
@@ -43,8 +44,13 @@ function ConnectedAccounts() {
           {data.map((connection) => (
             <li key={connection.id} className="connection-row">
               <span className="connection-name">
-                <strong>{PROVIDER_LABELS[connection.provider] ?? connection.provider}</strong>
-                <span className="muted">{connection.label}</span>
+                <span className={`provider-mark-sm provider-${connection.provider}`} aria-hidden="true">
+                  <ProviderLogo provider={connection.provider} size={15} />
+                </span>
+                <span className="connection-labels">
+                  <strong>{PROVIDER_LABELS[connection.provider] ?? connection.provider}</strong>
+                  <span className="muted">{connection.label}</span>
+                </span>
               </span>
               <span className="muted">Connected {formatDate(connection.connected_at)}</span>
             </li>

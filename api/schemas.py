@@ -89,6 +89,28 @@ class VerifyResult(BaseModel):
     domain: DomainOut
 
 
+class TestbedTargetOut(BaseModel):
+    id: str
+    name: str
+    category: str
+    domain: str
+    url: str | None = None
+    ports: list[int] = Field(default_factory=list)
+    docker_command: str | None = None
+    docker_teardown: str | None = None
+    description: str
+    vulnerabilities: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    provider_disclaimer: str | None = None
+    already_added: bool = False
+    domain_id: str | None = None
+
+
+class TestbedList(BaseModel):
+    total: int
+    testbeds: list[TestbedTargetOut]
+
+
 # --- scans -----------------------------------------------------------------------------
 
 class ScanRequest(BaseModel):
@@ -267,17 +289,27 @@ class ConnectionOut(BaseModel):
     label: str
     connected_at: UtcDatetime
     scopes: list[str] = []
+    method: str = "oauth"  # "oauth", or "token" when the person pasted an access token
 
 
 class ProviderInfo(BaseModel):
     provider: str
     label: str
     configured: bool  # false until the operator has registered an OAuth app and set its credentials
+    token_paste: bool = False  # true when an access token can be used instead (needs only the encryption key)
     connections: list[ConnectionOut] = []
 
 
 class ProviderList(BaseModel):
     providers: list[ProviderInfo]
+
+
+class TokenConnect(BaseModel):
+    """No length limits here on purpose: a validation error would echo the value back. They are checked
+    in `core.provider_service.clean_token`, whose messages never repeat it."""
+
+    token: str
+    team_id: str | None = None
 
 
 class ConnectStarted(BaseModel):

@@ -6,6 +6,7 @@ import { toHash, useRoute } from "../lib/router";
 import { useApi } from "../lib/useApi";
 import type { Connection, Domain, ProviderInfo, VerifyResult } from "../types";
 import { DeploymentPanel } from "./DeploymentProviders";
+import { TestLabsView } from "./TestLabsView";
 import { Badge, Banner, EmptyState, ErrorBanner, PageHeader, SkeletonRows } from "./ui";
 
 const STATUS_TONE = { verified: "success", pending: "warning", failed: "danger" } as const;
@@ -13,7 +14,7 @@ const STATUS_LABEL = { verified: "Verified", pending: "Not verified yet", failed
 
 const PROVIDER_LABEL: Record<string, string> = { vercel: "Vercel", netlify: "Netlify", cloudflare: "Cloudflare" };
 
-type Method = "domain" | "deployment";
+type Method = "domain" | "deployment" | "labs";
 
 /** What each short code the callback can put in the URL means to a person. */
 const CONNECT_ERRORS: Record<string, string> = {
@@ -96,7 +97,7 @@ function AddDomain({ onAdded }: { onAdded: (domain: Domain) => void }) {
   );
 }
 
-/** "Add a custom domain" or "Add a deployment": two ways to prove a target is yours. */
+/** "Add a custom domain", "Add a deployment", or "Test labs": ways to add and verify targets. */
 function MethodChoice({ value, onChange }: { value: Method; onChange: (next: Method) => void }) {
   const name = useId();
   const options: { id: Method; title: string; body: string }[] = [
@@ -109,6 +110,11 @@ function MethodChoice({ value, onChange }: { value: Method; onChange: (next: Met
       id: "deployment",
       title: "Deployment",
       body: "An app on Vercel, Netlify or Cloudflare Pages, like my-app.vercel.app. Verified through your account there.",
+    },
+    {
+      id: "labs",
+      title: "Test labs & benchmarks",
+      body: "Sanctioned targets (Juice Shop, DVWA, Apache 2.4.49, Acunetix) to safely test scans.",
     },
   ];
   return (
@@ -332,7 +338,7 @@ export function DomainsView() {
 
       {method === "domain" ? (
         <AddDomain onAdded={added} />
-      ) : (
+      ) : method === "deployment" ? (
         <DeploymentPanel
           providers={providers.data}
           loading={providers.loading}
@@ -346,6 +352,8 @@ export function DomainsView() {
             domains.reload();
           }}
         />
+      ) : (
+        <TestLabsView onAdded={added} embedded={true} />
       )}
       <div role="status" aria-live="polite" className="sr-only">{announce}</div>
 

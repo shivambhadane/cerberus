@@ -238,3 +238,37 @@ def test_losing_verified_status_stops_scanning(world, monkeypatch):
     domain.verification_status = "failed"
     world["session"].flush()
     assert world["alice"].post("/api/v1/scans", json={"domain_id": created["id"]}).status_code == 403
+
+
+def test_testbeds_listing_and_add(world):
+    alice = world["alice"]
+    resp = alice.get("/api/v1/domains/testbeds")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 5
+    ids = [t["id"] for t in data["testbeds"]]
+    assert "testasp" in ids
+    assert "apache-lab" in ids
+    assert "juice-shop" in ids
+    assert "dvwa" in ids
+
+    # Add testasp
+    post_resp = alice.post("/api/v1/domains/testbeds/testasp")
+    assert post_resp.status_code == 200
+    target = post_resp.json()
+    assert target["domain"] == "testasp.vulnweb.com"
+    assert target["verification_status"] == "verified"
+    assert target["verification_method"] == "testbed"
+
+    # Listing testbeds now shows already_added=True for testasp
+    after_resp = alice.get("/api/v1/domains/testbeds")
+    testasp = next(t for t in after_resp.json()["testbeds"] if t["id"] == "testasp")
+    assert testasp["already_added"] is True
+    assert testasp["domain_id"] == target["id"]
+
+    # Bob can also add testasp without colliding on unique verified owner
+    bob = world["bob"]
+    bob_resp = bob.post("/api/v1/domains/testbeds/testasp")
+    assert bob_resp.status_code == 200
+    assert bob_resp.json()["verification_status"] == "verified"
+

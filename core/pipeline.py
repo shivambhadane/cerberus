@@ -129,12 +129,13 @@ def run_pipeline(
             if summary["warning"]:
                 log.warning("%s", summary["warning"])
 
+        is_loopback = target in ("127.0.0.1", "localhost", "::1")
         active_scope = scope or Scope(
             domain=target,
-            include_subdomains=config.discovery.subdomain_enum,
+            include_subdomains=False if is_loopback else config.discovery.subdomain_enum,
             excluded_hosts=set(config.discovery.excluded_hosts),
             excluded_ports=set(config.discovery.excluded_ports),
-            allow_private_addresses=config.discovery.allow_private_addresses,
+            allow_private_addresses=config.discovery.allow_private_addresses or is_loopback,
         )
         summary["profile"] = active_profile.name
         log.info(

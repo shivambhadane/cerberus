@@ -99,8 +99,8 @@ class Domain(Base):
             "uq_domain_one_verified_owner",
             "domain",
             unique=True,
-            sqlite_where=text("verification_status = 'verified'"),
-            postgresql_where=text("verification_status = 'verified'"),
+            sqlite_where=text("verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"),
+            postgresql_where=text("verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"),
         ),
     )
 

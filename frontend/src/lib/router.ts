@@ -5,7 +5,7 @@ import { useCallback, useSyncExternalStore } from "react";
  * router: the back button, and links that survive a reload (filters, the selected finding).
  * `#/findings?status=active&finding=abc` carries both, so no dependency is warranted.
  */
-export const TABS = ["overview", "domains", "scans", "findings", "assets", "evidence", "profile"] as const;
+export const TABS = ["overview", "domains", "labs", "scans", "findings", "assets", "evidence", "profile"] as const;
 export type Tab = (typeof TABS)[number];
 
 interface Route {
