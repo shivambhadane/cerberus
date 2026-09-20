@@ -43,3 +43,7 @@ nuclei-templates/
 
 # Scan and tool logs
 *.log
+
+# Temporary screenshots and archives
+landing/screenshot_*.png
+*.zip
