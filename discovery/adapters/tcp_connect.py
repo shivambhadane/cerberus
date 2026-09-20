@@ -32,6 +32,11 @@ class TcpConnectScanner:
     def version(self) -> str | None:
         return None
 
+    def configure(self, config) -> None:
+        self.ports = list(config.ports) or DEFAULT_PORTS
+        self.timeout = config.connect_timeout
+        self.concurrency = config.max_concurrency
+
     async def _probe(self, host: str, port: int, sem: asyncio.Semaphore) -> int | None:
         async with sem:
             try:

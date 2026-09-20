@@ -78,3 +78,45 @@ def test_fresh_cache_produces_no_warning(session):
     session.flush()
 
     assert cache_warning(session, max_age_hours=24) is None
+
+
+# --- scans orphaned by a restart -------------------------------------------------------------
+
+def test_scans_left_active_by_a_restart_are_failed_not_left_blocking(session):
+    """Regression: a restart mid-scan left the row 'discovering' forever, so the
+    one-scan-at-a-time guard returned 409 for every future scan until the database was edited."""
+    from core.models import Scan, Tenant
+    from core.pipeline import fail_interrupted_scans
+
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    for status in ("pending", "discovering", "enriching", "scoring", "completed", "failed"):
+        session.add(Scan(tenant_id=tenant.id, target_domain=f"{status}.example.com", status=status))
+    session.flush()
+
+    assert fail_interrupted_scans(session) == 4
+
+    by_domain = {s.target_domain: s for s in session.query(Scan)}
+    for status in ("pending", "discovering", "enriching", "scoring"):
+        scan = by_domain[f"{status}.example.com"]
+        assert scan.status == "failed"
+        assert "interrupted" in scan.error
+        assert scan.completed_at is not None
+    assert by_domain["completed.example.com"].status == "completed"  # untouched
+    assert by_domain["failed.example.com"].error is None  # untouched
+
+
+def test_a_reaped_scan_no_longer_blocks_new_ones(session):
+    from core.models import Scan, Tenant
+    from core.pipeline import ACTIVE_SCAN_STATUSES, fail_interrupted_scans
+
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    session.add(Scan(tenant_id=tenant.id, target_domain="example.com", status="discovering"))
+    session.flush()
+
+    fail_interrupted_scans(session)
+
+    assert session.query(Scan).filter(Scan.status.in_(ACTIVE_SCAN_STATUSES)).count() == 0

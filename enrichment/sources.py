@@ -9,6 +9,8 @@ from datetime import date
 
 import requests
 
+from core.http import build_session
+
 log = logging.getLogger(__name__)
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -18,7 +20,15 @@ NVD_BASE = "https://services.nvd.nist.gov/rest/json"
 EPSS_BATCH = 100
 USER_AGENT = "cerberus-asm"
 
+# Shared retrying session for KEV/EPSS: both are single public endpoints hit at
+# module scope, so one session (and its connection pool) is enough for both.
+_session = build_session(user_agent=USER_AGENT)
+
 MAX_CPE_CANDIDATES = 3
+# NVD allows up to 2000 per page; smaller pages keep each response modest.
+NVD_PAGE_SIZE = 200
+# Upper bound on CVEs kept per technology lookup. Hitting it is logged, never silent.
+MAX_CVES_PER_LOOKUP = 500
 # Large enough that vendor ranking reflects the whole dictionary, not the first page.
 CPE_PAGE_SIZE = 2000
 
@@ -53,7 +63,7 @@ class NvdCve:
 
 def fetch_kev(timeout: int = 60) -> dict[str, KevRecord]:
     """CISA Known Exploited Vulnerabilities catalogue."""
-    resp = requests.get(KEV_URL, timeout=timeout, headers={"User-Agent": USER_AGENT})
+    resp = _session.get(KEV_URL, timeout=timeout)
     resp.raise_for_status()
     records: dict[str, KevRecord] = {}
     for row in resp.json().get("vulnerabilities", []):
@@ -81,11 +91,10 @@ def fetch_epss(cve_ids: list[str], timeout: int = 45) -> dict[str, float]:
     for i in range(0, len(cve_ids), EPSS_BATCH):
         batch = cve_ids[i : i + EPSS_BATCH]
         try:
-            resp = requests.get(
+            resp = _session.get(
                 EPSS_URL,
                 params={"cve": ",".join(batch), "limit": EPSS_BATCH},
                 timeout=timeout,
-                headers={"User-Agent": USER_AGENT},
             )
             resp.raise_for_status()
         except requests.RequestException as exc:
@@ -113,6 +122,11 @@ class NvdClient:
         self._lock = threading.Lock()
         self._last_call = 0.0
         self._cpe_cache: dict[str, list[str]] = {}
+        # NVD's own rate limit is enforced manually above (self._interval), so this
+        # session's retries only cover transient failures (429/5xx), not routine pacing.
+        self._session = build_session(user_agent=USER_AGENT)
+        if self.api_key:
+            self._session.headers["apiKey"] = self.api_key
 
     def _get(self, path: str, params: dict) -> dict | None:
         with self._lock:
@@ -121,11 +135,8 @@ class NvdClient:
                 time.sleep(wait)
             self._last_call = time.monotonic()
 
-        headers = {"User-Agent": USER_AGENT}
-        if self.api_key:
-            headers["apiKey"] = self.api_key
         try:
-            resp = requests.get(f"{NVD_BASE}/{path}", params=params, timeout=self.timeout, headers=headers)
+            resp = self._session.get(f"{NVD_BASE}/{path}", params=params, timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -160,23 +171,54 @@ class NvdClient:
         log.info("resolved product %r -> %s", product, bases or "no CPE match")
         return bases
 
-    def cves_for_cpe(self, cpe_base: str, version: str | None, limit: int = 50) -> list[NvdCve]:
-        """Version-aware CVE lookup. NVD applies the affected-version ranges itself."""
+    def cves_for_cpe(
+        self, cpe_base: str, version: str | None, limit: int = MAX_CVES_PER_LOOKUP
+    ) -> list[NvdCve]:
+        """Version-aware CVE lookup. NVD applies the affected-version ranges itself.
+
+        Results are paginated. Reading only the first page silently dropped 19 of the 69
+        CVEs NVD lists for Apache 2.4.49, and a dropped page can hold a KEV-listed CVE -
+        the one thing this tool exists not to miss - with no sign anything was lost.
+        """
         match = f"{cpe_base}:{version}:*:*:*:*:*:*:*" if version else f"{cpe_base}:*:*:*:*:*:*:*:*"
-        data = self._get("cves/2.0", {"virtualMatchString": match, "resultsPerPage": limit})
-        if not data:
-            return []
 
         out: list[NvdCve] = []
-        for item in data.get("vulnerabilities", []):
-            cve = item.get("cve", {})
-            out.append(
-                NvdCve(
-                    cve_id=cve["id"],
-                    cvss_score=_primary_cvss(cve.get("metrics", {})),
-                    description=_english_description(cve.get("descriptions", [])),
-                    has_public_exploit=_has_exploit_reference(cve.get("references", [])),
+        total = 0
+        start = 0
+        while len(out) < limit:
+            data = self._get(
+                "cves/2.0",
+                {
+                    "virtualMatchString": match,
+                    "resultsPerPage": min(NVD_PAGE_SIZE, limit - len(out)),
+                    "startIndex": start,
+                },
+            )
+            if not data:
+                break
+            items = data.get("vulnerabilities", [])
+            total = data.get("totalResults", total)
+            for item in items:
+                cve = item.get("cve", {})
+                if "id" not in cve:
+                    continue
+                out.append(
+                    NvdCve(
+                        cve_id=cve["id"].upper(),
+                        cvss_score=_primary_cvss(cve.get("metrics", {})),
+                        description=_english_description(cve.get("descriptions", [])),
+                        has_public_exploit=_has_exploit_reference(cve.get("references", [])),
+                    )
                 )
+            start += len(items)
+            if not items or start >= total:
+                break
+
+        if total > len(out):
+            log.warning(
+                "NVD lists %d CVEs for %s but only %d were retrieved (cap %d); "
+                "findings for this technology are incomplete",
+                total, match, len(out), limit,
             )
         return out
 

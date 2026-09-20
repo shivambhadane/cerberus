@@ -53,8 +53,15 @@ def ingest_assets(
     tenant_id: str,
     scan_id: str,
     result: DiscoveryResult,
+    user_id: str | None = None,
+    domain_id: str | None = None,
 ) -> list[Asset]:
-    """Upsert discovered endpoints, deduplicating on (tenant, host, port, protocol)."""
+    """Upsert discovered endpoints, deduplicating on (owner, host, port, protocol).
+
+    With a `user_id` the lookup is confined to that user's assets, so another user who holds the
+    same host:port neither sees nor overwrites this row. Without one (the CLI, and data from before
+    users existed) identity falls back to the tenant, over unowned rows only.
+    """
     persist_observations(session, scan_id, result.observations)
     technologies = _technology_index(result)
 
@@ -63,10 +70,12 @@ def ingest_assets(
         for obs in result.by_kind(ObservationKind.OPEN_PORT)
     }
 
-    existing = {
-        (a.hostname, a.port, a.protocol): a
-        for a in session.scalars(select(Asset).where(Asset.tenant_id == tenant_id))
-    }
+    scope = (
+        Asset.user_id == user_id
+        if user_id is not None
+        else (Asset.tenant_id == tenant_id) & Asset.user_id.is_(None)
+    )
+    existing = {(a.hostname, a.port, a.protocol): a for a in session.scalars(select(Asset).where(scope))}
 
     assets: list[Asset] = []
     created = updated = 0
@@ -80,6 +89,8 @@ def ingest_assets(
         if asset is None:
             asset = Asset(
                 tenant_id=tenant_id,
+                user_id=user_id,
+                domain_id=domain_id,
                 discovered_by_scan_id=scan_id,
                 hostname=endpoint.hostname,
                 ip_address=endpoint.ip_address,

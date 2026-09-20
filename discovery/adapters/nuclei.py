@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
-import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 from core.adapters import Endpoint, Observation, ObservationKind, register
+from core.proc import ScannerError, run_tool, stderr_tail
 from core.profiles import (
     ScanProfile,
     audit_nuclei_args,
@@ -37,6 +38,11 @@ log = logging.getLogger(__name__)
 
 RUN_TIMEOUT = 1800
 HTTPS_PORTS = {443, 8443}
+
+# nuclei writes coloured, level-prefixed lines to stderr even with -no-color on some
+# builds; provenance records must hold a clean version string.
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+VERSION_RE = re.compile(r"v?\d+\.\d+\.\d+")
 
 
 def _url_for(endpoint: Endpoint) -> str:
@@ -55,16 +61,12 @@ class NucleiScanner:
         if not self.is_available():
             return None
         try:
-            proc = subprocess.run(
-                ["nuclei", "-version"], capture_output=True, text=True, timeout=20
-            )
-            output = (proc.stdout + proc.stderr).strip()
-            for line in output.splitlines():
-                if "nuclei" in line.lower() and any(c.isdigit() for c in line):
-                    return line.strip()
-            return output.splitlines()[-1].strip() if output else None
-        except (subprocess.SubprocessError, IndexError):
+            proc = run_tool(["nuclei", "-version"], timeout=20)
+        except ScannerError:
             return None
+        output = ANSI_RE.sub("", proc.stdout + proc.stderr)
+        match = VERSION_RE.search(output)
+        return match.group(0) if match else None
 
     def build_command(self, targets_file: Path, output_file: Path, profile: ScanProfile) -> list[str]:
         """Assemble and audit the invocation. Raises rather than run anything unsafe."""
@@ -107,11 +109,10 @@ class NucleiScanner:
                 "nuclei: %d targets, profile=%s, rate=%s/s, concurrency=%s",
                 len(targets), profile.name, profile.rate_limit, profile.concurrency,
             )
-            try:
-                subprocess.run(command, capture_output=True, text=True, timeout=RUN_TIMEOUT, check=False)
-            except subprocess.TimeoutExpired:
-                log.warning("nuclei timed out after %ss", RUN_TIMEOUT)
-                return []
+            proc = run_tool(command, timeout=RUN_TIMEOUT, tool="nuclei")
+            if proc.returncode != 0:
+                # Zero detections and "nuclei failed" must not look alike.
+                raise ScannerError(f"nuclei exited {proc.returncode}: {stderr_tail(proc)}")
 
             raw = output_file.read_text() if output_file.exists() else ""
 
@@ -159,7 +160,7 @@ class NucleiScanner:
 
             host = result.get("host") or ""
             matched_at = result.get("matched-at") or result.get("matched") or host
-            target = self._target_from(host, matched_at)
+            target = _target_from(result)
             if scope is not None and target and not scope.permits_host(_hostname_of(target)):
                 skipped += 1
                 log.warning("discarding nuclei result %s: %s is outside scope", template_id, target)
@@ -189,8 +190,8 @@ class NucleiScanner:
                         "type": result.get("type"),
                         "host": host,
                         "matched_at": matched_at,
-                        "cve_ids": _as_list(classification.get("cve-id")),
-                        "cwe_ids": _as_list(classification.get("cwe-id")),
+                        "cve_ids": _as_list(classification.get("cve-id"), upper=True),
+                        "cwe_ids": _as_list(classification.get("cwe-id"), upper=True),
                         "cvss_score": classification.get("cvss-score"),
                         "technology": _technology_from(tags),
                         "matcher_name": result.get("matcher-name"),
@@ -209,22 +210,51 @@ class NucleiScanner:
         log.info("nuclei: %d detections retained", len(observations))
         return observations
 
-    @staticmethod
-    def _target_from(host: str, matched_at: str) -> str:
-        value = host or matched_at or ""
-        return value.split("://")[-1].split("/")[0] if value else ""
-
-
 def _hostname_of(target: str) -> str:
-    return target.split(":")[0]
+    return target.rsplit(":", 1)[0] if _has_port(target) else target
 
 
-def _as_list(value) -> list[str]:
+def _has_port(target: str) -> bool:
+    head, _, tail = target.rpartition(":")
+    return bool(head) and tail.isdigit()
+
+
+def _target_from(result: dict) -> str:
+    """`host:port`, the key Cerberus assets are matched on.
+
+    Real nuclei emits a *bare* host (`127.0.0.1`) with the port in a separate `port`
+    field and in `url`; older or other output shapes put the port inside `host`. Reading
+    only `host` drops the port, after which every detection fails to match its asset and
+    is silently discarded - so all the shapes are handled here.
+    """
+    raw_host = (result.get("host") or "").strip()
+    url = result.get("url") or result.get("matched-at") or ""
+    scheme = (result.get("scheme") or (url.split("://")[0] if "://" in url else "")).lower()
+
+    hostname = raw_host.split("://")[-1].split("/")[0]
+    if _has_port(hostname):
+        return hostname
+
+    port = result.get("port")
+    if port in (None, "") and url:
+        authority = url.split("://")[-1].split("/")[0]
+        if _has_port(authority):
+            port = authority.rsplit(":", 1)[1]
+    if port in (None, ""):
+        port = "443" if scheme == "https" else "80"
+
+    if not hostname:
+        hostname = url.split("://")[-1].split("/")[0].rsplit(":", 1)[0]
+    return f"{hostname}:{port}" if hostname else ""
+
+
+def _as_list(value, upper: bool = False) -> list[str]:
+    """Nuclei lower-cases identifiers (`cve-2021-41773`); everywhere else in Cerberus they
+    are upper-case, so an un-normalized id never joins to KEV/EPSS data."""
     if not value:
         return []
-    if isinstance(value, str):
-        return [value]
-    return [str(v) for v in value if v]
+    items = [value] if isinstance(value, str) else [str(v) for v in value if v]
+    return [i.strip().upper() if upper else i for i in items]
 
 
 def _technology_from(tags: list[str]) -> str | None:

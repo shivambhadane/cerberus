@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 TECH_RE = re.compile(r"^(?P<product>[A-Za-z][\w\-. ]*?)[/ ]v?(?P<version>\d[\w.\-]*)")
 VERSION_CORE_RE = re.compile(r"^(\d+(?:\.\d+){0,2})")
 
-MAX_CVES_PER_TECH = 50
 MAX_LOOKUPS = 5
 MAX_CVSS_BACKFILL = 10
 
@@ -100,7 +99,7 @@ def _lookup_cves(
             if attempts >= MAX_LOOKUPS:
                 break
             attempts += 1
-            cves = nvd.cves_for_cpe(base, candidate, limit=MAX_CVES_PER_TECH)
+            cves = nvd.cves_for_cpe(base, candidate)
             if cves:
                 for cve in cves:
                     apply_nvd(session, cve)

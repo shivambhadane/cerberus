@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<nmaprun scanner="nmap" version="7.94">
+<host><status state="up" reason="user-set"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames><hostname name="localhost" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="18081"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Apache httpd" version="2.4.49" extrainfo="(Unix)" method="probed" conf="10"><cpe>cpe:/a:apache:http_server:2.4.49</cpe></service></port>
+<port protocol="tcp" portid="18082"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Apache httpd" version="2.4.50" extrainfo="(Unix)" method="probed" conf="10"><cpe>cpe:/a:apache:http_server:2.4.50</cpe></service></port>
+</ports></host>
+</nmaprun>

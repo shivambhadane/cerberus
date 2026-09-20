@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+
 import pytest
 
 from core.profiles import (
@@ -94,6 +97,28 @@ def test_rate_limit_is_always_expressed():
 def test_auto_update_is_disabled():
     """Templates must not silently change underneath a scan."""
     assert "-disable-update-check" in SAFE.nuclei_args()
+
+
+# --- profiles must be something nuclei will actually run --------------------------------
+
+def test_a_protocol_nuclei_does_not_know_is_refused():
+    """Thorough once named "network" (nuclei calls it "tcp"). nuclei exits 2 on an unknown -type
+    before scanning anything, and every Thorough scan silently ran without it."""
+    with pytest.raises(ProfileViolation, match="does not accept"):
+        build(allowed_protocols=frozenset({"http", "network"}))
+
+
+@pytest.mark.skipif(shutil.which("nuclei") is None, reason="nuclei is not installed")
+@pytest.mark.parametrize("profile", [SAFE, THOROUGH], ids=lambda p: p.name)
+def test_real_nuclei_accepts_every_profile(profile):
+    """The flags a profile generates are parsed by the installed nuclei. -tl lists matching
+    templates without touching any target, so this proves the invocation is valid, offline."""
+    proc = subprocess.run(
+        ["nuclei", *profile.nuclei_args(), "-tl"],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, (proc.stdout + proc.stderr)[-300:]
+    assert proc.stdout.strip(), "the profile matched no templates at all"
 
 
 # --- profile selection -----------------------------------------------------------------

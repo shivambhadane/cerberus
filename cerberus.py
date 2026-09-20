@@ -26,16 +26,48 @@ def _setup_logging(verbose: bool) -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
+def _find_user_id(email: str) -> str | None:
+    from sqlalchemy import select
+
+    from core.db import init_db, session_scope
+    from core.models import User
+    from core.ownership import normalize_email
+
+    init_db()
+    with session_scope() as session:
+        return session.scalar(select(User.id).where(User.email == normalize_email(email)))
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     config = load_config()
+    if args.allow_private:
+        config.discovery.allow_private_addresses = True
+    if args.no_subdomains:
+        config.discovery.subdomain_enum = False
+    if args.ports:
+        try:
+            config.discovery.ports = [int(p) for p in args.ports.split(",") if p.strip()]
+        except ValueError:
+            print(f"refused: --ports must be comma-separated integers, got {args.ports!r}", file=sys.stderr)
+            return 2
     try:
         profile = get_profile(args.profile or config.scanning.profile, opted_in=args.accept_profile)
     except ProfileViolation as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
 
+    owner_id = None
+    if args.owner:
+        owner_id = _find_user_id(args.owner)
+        if owner_id is None:
+            print(
+                f"refused: no account for {args.owner!r}. Register it in the dashboard first.",
+                file=sys.stderr,
+            )
+            return 2
+
     try:
-        scan_id = start_scan(args.target, args.authorized, profile=profile.name)
+        scan_id = start_scan(args.target, args.authorized, profile=profile.name, user_id=owner_id)
     except NotAuthorizedError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
@@ -48,6 +80,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         f"done: {summary['assets']} assets, {summary['findings']} findings, "
         f"{summary['scored']} scored"
     )
+    if summary.get("active_detections") is not None:
+        print(
+            f"detection: {summary.get('active_detections', 0)} active-detection finding(s); "
+            f"tools: {', '.join(summary.get('tools', [])) or 'none'}"
+        )
+    for failure in summary.get("tool_errors", []):
+        print(f"\nTOOL FAILED: {failure}", file=sys.stderr)
     if summary.get("warning"):
         print(f"\nWARNING: {summary['warning']}", file=sys.stderr)
     print("\nTop findings:")
@@ -133,6 +172,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--accept-profile",
         action="store_true",
         help="acknowledge a more intrusive profile that requires explicit opt-in",
+    )
+    scan.add_argument(
+        "--owner",
+        metavar="EMAIL",
+        help="attach the scan to this dashboard account, so its results appear in that user's "
+        "dashboard (the account must already exist). Without it the scan has no owner and is "
+        "visible to no one until `scripts/claim_legacy.py` assigns it",
+    )
+    scan.add_argument(
+        "--allow-private",
+        action="store_true",
+        help="permit loopback/private addresses (for a local lab). Off by default so a scan "
+        "cannot be steered at internal infrastructure",
+    )
+    scan.add_argument(
+        "--no-subdomains",
+        action="store_true",
+        help="scan only the given host; skip certificate-transparency subdomain enumeration",
+    )
+    scan.add_argument(
+        "--ports",
+        help="comma-separated TCP ports to scan, replacing the default list",
     )
     scan.add_argument("--top", type=int, default=10, help="findings to print when done")
     scan.set_defaults(func=cmd_scan)

@@ -29,6 +29,13 @@ FORBIDDEN_TAGS = frozenset({
 # nuclei protocol types. `code` runs local commands and `file` reads the local disk:
 # neither is remote assessment, and both are a sandbox-escape risk.
 FORBIDDEN_PROTOCOLS = frozenset({"code", "file"})
+# Every value nuclei's `-type` flag accepts (v3.x). A name outside this list makes nuclei exit 2
+# before scanning anything, so a typo is refused when the profile is built, not mid-scan. (The
+# Thorough profile once said "network", which older nuclei called TCP; every Thorough scan ran
+# without nuclei until this check existed.)
+NUCLEI_PROTOCOLS = frozenset({
+    "dns", "file", "http", "headless", "tcp", "workflow", "ssl", "websocket", "whois", "code", "javascript",
+})
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 
@@ -64,6 +71,12 @@ class ScanProfile:
             raise ProfileViolation(
                 f"profile {self.name!r} may not enable protocols {sorted(bad_protocols)}: "
                 "they execute code or read local files rather than probing the target"
+            )
+        unsupported = self.allowed_protocols - NUCLEI_PROTOCOLS
+        if unsupported:
+            raise ProfileViolation(
+                f"profile {self.name!r} names protocols nuclei does not accept: {sorted(unsupported)} "
+                f"(valid: {sorted(NUCLEI_PROTOCOLS)})"
             )
         unknown = set(self.severities) - set(SEVERITIES)
         if unknown:
@@ -137,7 +150,7 @@ THOROUGH = ScanProfile(
         "cve", "exposure", "misconfig", "ssl", "tech", "takeover",
         "default-login", "unauth", "config",
     }),
-    allowed_protocols=frozenset({"http", "ssl", "dns", "network"}),
+    allowed_protocols=frozenset({"http", "ssl", "dns", "tcp"}),
     severities=SEVERITIES,
     rate_limit=40,
     concurrency=20,

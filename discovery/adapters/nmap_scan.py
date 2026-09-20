@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from core.adapters import Endpoint, Observation, ObservationKind, register
+from core.proc import ScannerError, run_tool, stderr_tail
 from core.scope import Scope
 from discovery.adapters.tcp_connect import DEFAULT_PORTS
 
@@ -34,15 +34,18 @@ class NmapScanner:
     def is_available(self) -> bool:
         return shutil.which("nmap") is not None
 
+    def configure(self, config) -> None:
+        self.ports = list(config.ports) or DEFAULT_PORTS
+
     def version(self) -> str | None:
         if not self.is_available():
             return None
         try:
-            proc = subprocess.run(["nmap", "--version"], capture_output=True, text=True, timeout=15)
-            first = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
-            return first or None
-        except (subprocess.SubprocessError, IndexError):
+            proc = run_tool(["nmap", "--version"], timeout=15)
+        except ScannerError:
             return None
+        first = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
+        return first or None
 
     def run(self, endpoints: list[Endpoint], scope: Scope) -> list[Observation]:
         hosts = sorted({e.hostname for e in endpoints if scope.permits_host(e.hostname)})
@@ -57,16 +60,16 @@ class NmapScanner:
                 "-sV", "--version-intensity", "2",
                 "-T3", "-p", ports, "-oX", str(out), *hosts,
             ]
-            try:
-                subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT, check=False)
-                xml = out.read_text() if out.exists() else ""
-            except subprocess.TimeoutExpired:
-                log.warning("nmap timed out after %ss", TIMEOUT)
-                return []
+            proc = run_tool(cmd, timeout=TIMEOUT, tool="nmap")
+            if proc.returncode != 0:
+                raise ScannerError(f"nmap exited {proc.returncode}: {stderr_tail(proc)}")
+            xml = out.read_text() if out.exists() else ""
 
-        return self._parse(xml, scope)
+        return self._parse(xml, scope, endpoints)
 
-    def _parse(self, xml: str, scope: Scope) -> list[Observation]:
+    def _parse(
+        self, xml: str, scope: Scope, endpoints: list[Endpoint] | None = None
+    ) -> list[Observation]:
         if not xml.strip():
             return []
         try:
@@ -77,12 +80,14 @@ class NmapScanner:
 
         version = self.version()
         observations: list[Observation] = []
+        requested = {e.ip_address: e.hostname for e in (endpoints or []) if e.ip_address}
         for host in root.findall("host"):
-            names = [h.get("name") for h in host.findall("hostnames/hostname") if h.get("name")]
             address = host.find("address")
             ip = address.get("addr") if address is not None else None
-            hostname = names[0] if names else ip
+            hostname = _identify_host(host, ip, requested)
             if hostname is None or not scope.permits_host(hostname):
+                continue
+            if ip is not None and not scope.permits_address(ip):
                 continue
 
             for port in host.findall("ports/port"):
@@ -119,6 +124,31 @@ class NmapScanner:
                 )
         log.info("nmap: %d open ports", len(observations))
         return observations
+
+
+def _identify_host(host: ET.Element, ip: str | None, requested: dict[str, str]) -> str | None:
+    """Decide which hostname a result belongs to, without trusting reverse DNS.
+
+    nmap labels a host with whatever its PTR record says (`localhost`, or
+    `93-184-216-34.bc.googleusercontent.com` for a cloud IP). That name says nothing about
+    the target we asked for, and treating it as identity makes the scope check reject
+    every result on a real host. Identity comes from, in order: the name we passed on the
+    command line (`type="user"`), the endpoint we already resolved to this address, then any
+    non-PTR name. A PTR name is never used.
+    """
+    by_type: dict[str, str] = {}
+    for h in host.findall("hostnames/hostname"):
+        if h.get("name"):
+            by_type.setdefault(h.get("type") or "", h.get("name"))
+
+    if "user" in by_type:
+        return by_type["user"]
+    if ip is not None and ip in requested:
+        return requested[ip]
+    for kind, name in by_type.items():
+        if kind != "PTR":
+            return name
+    return ip
 
 
 register(NmapScanner())

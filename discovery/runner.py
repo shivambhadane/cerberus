@@ -8,9 +8,12 @@ job; this module deliberately keeps the tool output intact so provenance survive
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from core.adapters import Endpoint, Observation, ObservationKind, available
+from core.config import DiscoveryConfig
+from core.proc import ScannerError
 from core.profiles import ScanProfile
 from core.scope import Scope
 
@@ -21,9 +24,35 @@ log = logging.getLogger(__name__)
 class DiscoveryResult:
     observations: list[Observation]
     endpoints: list[Endpoint]
+    # Tools that failed to run. Kept apart from observations so "found nothing" and
+    # "did not run" are never confused in a scan report.
+    errors: list[str] = field(default_factory=list)
 
     def by_kind(self, kind: str) -> list[Observation]:
         return [o for o in self.observations if o.kind == kind]
+
+
+def _configure(scanner, config: DiscoveryConfig | None) -> None:
+    """Apply operator config to an adapter that accepts it.
+
+    Adapters are registered once at import time, so without this step settings such as
+    discovery.ports would be silently ignored.
+    """
+    configure = getattr(scanner, "configure", None)
+    if config is not None and callable(configure):
+        configure(config)
+
+
+def _run_adapter(
+    scanner, call: Callable[[], list[Observation]], errors: list[str]
+) -> list[Observation]:
+    """Run one adapter; a failure is recorded, not fatal, and never silent."""
+    try:
+        return call()
+    except ScannerError as exc:
+        log.error("adapter %s failed: %s", scanner.name, exc)
+        errors.append(f"{scanner.name}: {exc}")
+        return []
 
 
 def _hosts_from(observations: list[Observation], scope: Scope) -> list[Endpoint]:
@@ -66,19 +95,23 @@ def run_discovery(
     scope: Scope,
     profile: ScanProfile,
     enumerate_subdomains: bool = True,
+    config: DiscoveryConfig | None = None,
 ) -> DiscoveryResult:
     """Domain -> in-scope endpoints, with every observation attributed to its tool.
 
-    `profile` governs the vulnerability-scanning stage; adapters receive it directly
-    rather than any arguments assembled here.
+    `profile` decides whether the target is contacted at all: a profile that permits no
+    active probing stops after passive enumeration and DNS. Otherwise it also governs the
+    vulnerability-scanning stage, where adapters receive it directly rather than any
+    arguments assembled here.
     """
     import discovery.adapters  # noqa: F401  (registers the adapters)
 
     observations: list[Observation] = []
+    errors: list[str] = []
 
     if enumerate_subdomains:
         for scanner in available(ObservationKind.SUBDOMAIN):
-            observations.extend(scanner.run(scope))
+            observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(scope), errors))
     else:
         log.info("subdomain enumeration disabled; using the apex domain only")
 
@@ -91,17 +124,25 @@ def run_discovery(
             hosts = [Endpoint(hostname=scope.domain, ip_address=ip)]
     if not hosts:
         log.warning("no in-scope hosts resolved for %s", scope.domain)
-        return DiscoveryResult(observations, [])
+        return DiscoveryResult(observations, [], errors)
+
+    if not profile.runs_active_probes:
+        # A passive profile promises certificate-transparency and DNS only. Everything past
+        # this point sends packets to the target, so it must not run - the promise is
+        # otherwise just documentation.
+        log.info("profile %s is passive: names resolved via DNS, target not contacted", profile.name)
+        return DiscoveryResult(observations, [], errors)
 
     port_observations: list[Observation] = []
     for scanner in available(ObservationKind.OPEN_PORT):
-        port_observations.extend(scanner.run(hosts, scope))
+        _configure(scanner, config)
+        port_observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(hosts, scope), errors))
     observations.extend(port_observations)
 
     endpoints = _endpoints_from_ports(port_observations, scope)
     if not endpoints:
         log.info("no open ports found for %s", scope.domain)
-        return DiscoveryResult(observations, [])
+        return DiscoveryResult(observations, [], errors)
 
     # Port scanners that do service detection (nmap -sV) already supply technology;
     # only probe what is still unidentified.
@@ -110,11 +151,13 @@ def run_discovery(
     }
     unidentified = [e for e in endpoints if str(e) not in identified]
     for scanner in available(ObservationKind.TECHNOLOGY):
-        observations.extend(scanner.run(unidentified, scope))
+        observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(unidentified, scope), errors))
 
     if profile.runs_active_probes:
         for scanner in available(ObservationKind.VULNERABILITY):
-            observations.extend(scanner.run(endpoints, scope, profile))
+            observations.extend(
+                _run_adapter(scanner, lambda s=scanner: s.run(endpoints, scope, profile), errors)
+            )
     else:
         log.info("profile %s permits no active probing; skipping detection", profile.name)
 
@@ -123,4 +166,4 @@ def run_discovery(
         len(observations), len(endpoints),
         sorted({o.source_tool for o in observations}),
     )
-    return DiscoveryResult(observations, endpoints)
+    return DiscoveryResult(observations, endpoints, errors)

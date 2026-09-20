@@ -288,3 +288,107 @@ def test_active_detection_is_reported_in_the_reasoning_without_changing_the_scor
     assert detected.risk_score == inferred.risk_score
     assert "confirmed by active probe" in detected.reasoning
     assert "confirmed by active probe" not in inferred.reasoning
+
+
+# --- a failed run must not look like "found nothing" -----------------------------------------
+
+def test_nonzero_exit_raises_instead_of_returning_no_detections(monkeypatch):
+    import subprocess
+
+    from core.proc import ScannerError
+
+    monkeypatch.setattr(SCANNER, "is_available", lambda: True)
+    monkeypatch.setattr(
+        "discovery.adapters.nuclei.run_tool",
+        lambda *a, **k: subprocess.CompletedProcess([], 2, "", "[FTL] could not load templates"),
+    )
+    from core.adapters import Endpoint
+
+    with pytest.raises(ScannerError, match="exited 2.*could not load templates"):
+        SCANNER.run([Endpoint("api.example.com", "203.0.113.10", 443)], SCOPE, SAFE)
+
+
+def test_timeout_propagates_as_a_scanner_error(monkeypatch):
+    from core.adapters import Endpoint
+    from core.proc import ScannerError
+
+    def timeout(*a, **k):
+        raise ScannerError("nuclei timed out after 1800s")
+
+    monkeypatch.setattr(SCANNER, "is_available", lambda: True)
+    monkeypatch.setattr("discovery.adapters.nuclei.run_tool", timeout)
+
+    with pytest.raises(ScannerError, match="timed out"):
+        SCANNER.run([Endpoint("api.example.com", "203.0.113.10", 443)], SCOPE, SAFE)
+
+
+# --- real nuclei output ---------------------------------------------------------------------
+# tests/fixtures/nuclei_real_cve_2021_41773.jsonl is a record captured from nuclei v3.11.1
+# running against the Docker lab, with only the bulky request/response bodies trimmed. The
+# hand-written fixtures above assumed a shape that real nuclei does not emit; these tests
+# exist so that cannot happen again.
+
+REAL = (Path(__file__).parent / "fixtures" / "nuclei_real_cve_2021_41773.jsonl").read_text()
+LAB_SCOPE = Scope(domain="127.0.0.1", allow_private_addresses=True)
+
+
+def test_real_record_keeps_the_port():
+    """Real nuclei emits a bare host with the port in a separate field."""
+    observation = SCANNER.parse(REAL, SAFE, LAB_SCOPE)[0]
+    assert observation.target == "127.0.0.1:18081"
+
+
+def test_real_record_identifiers_are_upper_cased():
+    """Nuclei writes `cve-2021-41773`; unnormalised, it never joins to KEV/EPSS data."""
+    data = SCANNER.parse(REAL, SAFE, LAB_SCOPE)[0].data
+    assert data["cve_ids"] == ["CVE-2021-41773"]
+    assert data["cwe_ids"] == ["CWE-22"]
+
+
+def test_real_record_maps_the_rest_of_the_fields():
+    observation = SCANNER.parse(REAL, SAFE, LAB_SCOPE)[0]
+    data = observation.data
+    assert data["template_id"] == "CVE-2021-41773"
+    assert data["severity"] == "high"
+    assert data["technology"] == "apache"
+    assert data["matched_at"].endswith("/etc/passwd")
+    assert data["cvss_score"] == 7.5
+    assert observation.observed_at.year == 2026  # nanosecond-precision +05:30 timestamp parsed
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ({"host": "127.0.0.1", "port": "18081"}, "127.0.0.1:18081"),                    # real nuclei
+    ({"host": "api.example.com:8443"}, "api.example.com:8443"),                     # port inside host
+    ({"host": "https://api.example.com:443"}, "api.example.com:443"),               # scheme + port
+    ({"host": "api.example.com", "scheme": "https"}, "api.example.com:443"),        # default https
+    ({"host": "api.example.com", "scheme": "http"}, "api.example.com:80"),          # default http
+    ({"host": "", "url": "http://api.example.com:9000"}, "api.example.com:9000"),   # url only
+])
+def test_target_is_derived_from_every_output_shape(fields, expected):
+    from discovery.adapters.nuclei import _target_from
+
+    assert _target_from(fields) == expected
+
+
+def test_a_real_detection_matches_its_asset_end_to_end(session):
+    """The chain that was broken: real record -> observation -> asset match -> finding."""
+    from core.models import Asset, CveEnrichment, Finding, Tenant
+    from enrichment.matcher import record_active_detections
+
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    asset = Asset(tenant_id=tenant.id, hostname="127.0.0.1", port=18081, protocol="tcp")
+    session.add(asset)
+    # KEV data is keyed by upper-case id; the finding must land on that same row.
+    session.add(CveEnrichment(cve_id="CVE-2021-41773", kev_listed=True, epss_score=0.99))
+    session.flush()
+
+    observations = SCANNER.parse(REAL, SAFE, LAB_SCOPE)
+    findings = record_active_detections(session, [asset], observations)
+
+    assert len(findings) == 1
+    assert findings[0].cve_id == "CVE-2021-41773"
+    assert findings[0].detection_method == "active_detection"
+    assert session.query(CveEnrichment).count() == 1  # no stray lower-case duplicate row
+    assert session.query(Finding).count() == 1

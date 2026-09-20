@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
 
 from core.adapters import Observation, ObservationKind, register
+from core.proc import ScannerError, run_tool, stderr_tail
 from core.scope import Scope
 from discovery.adapters.crtsh import resolve
 
@@ -26,25 +26,16 @@ class SubfinderScanner:
         if not self.is_available():
             return None
         try:
-            proc = subprocess.run(
-                ["subfinder", "-version"], capture_output=True, text=True, timeout=15
-            )
-            output = (proc.stdout + proc.stderr).strip()
-            return output.splitlines()[-1] if output else None
-        except (subprocess.SubprocessError, IndexError):
+            proc = run_tool(["subfinder", "-version"], timeout=15)
+        except ScannerError:
             return None
+        output = (proc.stdout + proc.stderr).strip()
+        return output.splitlines()[-1] if output else None
 
     def run(self, scope: Scope) -> list[Observation]:
-        try:
-            proc = subprocess.run(
-                ["subfinder", "-d", scope.domain, "-silent"],
-                capture_output=True,
-                text=True,
-                timeout=TIMEOUT,
-            )
-        except subprocess.TimeoutExpired:
-            log.warning("subfinder timed out for %s", scope.domain)
-            return []
+        proc = run_tool(["subfinder", "-d", scope.domain, "-silent"], timeout=TIMEOUT, tool="subfinder")
+        if proc.returncode != 0:
+            raise ScannerError(f"subfinder exited {proc.returncode}: {stderr_tail(proc)}")
 
         version = self.version()
         observations = []

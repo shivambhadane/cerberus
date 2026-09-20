@@ -33,6 +33,23 @@ DEFAULT_WEIGHTS = {
     "exposure_context": 0.15,
 }
 
+# Score thresholds for the named risk bands, highest first. The dashboard mirrors these in
+# frontend/src/components/ui.tsx (riskBand); change both together.
+RISK_BANDS: tuple[tuple[str, float], ...] = (
+    ("critical", 80.0), ("high", 60.0), ("medium", 40.0), ("low", 0.0),
+)
+
+
+def risk_band(score: float | None) -> str:
+    """The named band a 0-100 score falls in, or "unscored" when there is no score yet."""
+    if score is None:
+        return "unscored"
+    for name, threshold in RISK_BANDS:
+        if score >= threshold:
+            return name
+    return "low"
+
+
 CRITICALITY_VALUES = {"low": 0.25, "medium": 0.5, "high": 0.75, "critical": 1.0}
 WEB_PORTS = {80, 443, 8000, 8080, 8443, 8888, 3000}
 
@@ -134,14 +151,25 @@ def score_finding(
     return ScoreResult(round(score, 1), reasoning, components)
 
 
-def score_pending_findings(session: Session, weights: dict[str, float] | None = None) -> int:
-    """Stage 4: (re)score every finding from current enrichment data."""
-    rows = session.execute(
+def score_pending_findings(
+    session: Session,
+    weights: dict[str, float] | None = None,
+    asset_id: str | None = None,
+) -> int:
+    """Stage 4: (re)score findings from current enrichment data.
+
+    `asset_id` limits it to one asset, which is what changing that asset's criticality needs;
+    re-scoring every finding for a one-row edit would be wasted work.
+    """
+    stmt = (
         select(Finding, CveEnrichment, Asset, AssetCriticality)
         .join(CveEnrichment, Finding.cve_id == CveEnrichment.cve_id)
         .join(Asset, Finding.asset_id == Asset.id)
         .outerjoin(AssetCriticality, AssetCriticality.asset_id == Asset.id)
-    ).all()
+    )
+    if asset_id is not None:
+        stmt = stmt.where(Asset.id == asset_id)
+    rows = session.execute(stmt).all()
 
     for finding, cve, asset, criticality in rows:
         level = criticality.level if criticality else "medium"
