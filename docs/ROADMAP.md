@@ -29,18 +29,105 @@ the top findings were `CVE-2021-41773` and `CVE-2021-42013` (KEV-listed path-tra
 and `CVE-2023-44487` at CVSS **7.5** outranked `CVE-2021-44790` at CVSS **9.8** because only the
 former is under active exploitation — the behaviour the whole product exists to produce.
 
+> **Superseded.** The discovery implementation described above (`discovery/subdomains.py`,
+> `discovery/ports.py`, `discovery/fingerprint.py`) was deleted and rebuilt as the adapter
+> architecture in Phase 1.5 below. The exit criterion still holds against the new code.
+
+## Phase 1.5 — Real-target validation (adapters, scope, profiles, provenance)
+
+Not in the original plan; added when moving from "runs against a lab" to "safe against
+infrastructure we don't own the whole stack of." See [RULES_OF_ENGAGEMENT.md §4](RULES_OF_ENGAGEMENT.md#4-scan-profiles).
+
+- [x] `core/scope.py`: authorization boundary as code, not prose. Fixed a real hole — the
+      prior `name.endswith(domain)` check accepted `evilexample.com` as in-scope for
+      `example.com`. Also refuses private/loopback/link-local addresses (including the
+      `169.254.169.254` cloud metadata endpoint) unless a development scope opts in.
+- [x] `core/adapters.py`: `Scanner` protocols + registry, so a tool is a plug-in, not a
+      rewrite. `Observation` carries tool attribution on every fact discovered.
+- [x] `core/profiles.py`: scan profiles (`passive` / `safe` / `thorough`) with a
+      **non-overridable safety floor** — `dos`/`ddos`/`fuzz`/`fuzzing`/`intrusive`/
+      `brute-force` tags and `code`/`file` protocols are refused at profile construction,
+      re-audited at adapter entry, and filtered again on results returned, so a mutated
+      profile or a multi-tag template can't smuggle one through. 21 tests target the floor
+      alone. `thorough` requires explicit opt-in (`--accept-profile` / `accept_profile`).
+- [x] Discovery adapters: `crtsh`, `subfinder`, `tcp_connect`, `nmap`, `http_probe` — the
+      old modules rebuilt as adapters, no parallel implementation left behind.
+- [x] `discovery/adapters/nuclei.py`: real vulnerability *detection* (not just version
+      inference), governed entirely by the resolved profile. Verified against the
+      installed binary (v3.11.1, 13,619 templates; the `safe` profile selects 4,754 of
+      them) — the live process's argv matched `profile.nuclei_args()` exactly.
+- [x] Provenance: raw tool output persists to an `observations` table before
+      normalization; findings carry `detection_method` (`version_inference` vs
+      `active_detection`), `detected_by_tool`, and an `evidence` string. An active
+      nuclei detection supersedes an inferred finding for the same (asset, CVE) rather
+      than duplicating it.
+- [x] `GET /api/v1/observations` — the evidence chain is queryable, not just internal.
+- [x] Dashboard: scan-profile selector with the `thorough` opt-in gate mirrored in the UI,
+      and a confirmed/inferred badge distinguishing `active_detection` from
+      `version_inference` on every finding.
+- [x] `core/http.py` retry/backoff session wired into KEV, EPSS and NVD calls.
+- [x] Dashboard: an "Evidence" tab browsing raw observations with per-tool provenance.
+- [x] Database migrations (Alembic). Fresh databases are built by migrations; databases created
+      before migrations existed are adopted only if their schema matches, and refused with a
+      clear error otherwise. A test asserts migrations and models cannot drift apart.
+- [x] `core/proc.py`: every external tool runs through one helper that closes stdin and turns
+      timeouts and crashes into an explicit `ScannerError`, surfaced in the scan summary
+      instead of looking like "found nothing".
+- [x] A confirmed nuclei run against the lab, with numbers on record — see
+      [VALIDATION.md](VALIDATION.md), including the bugs it found.
+
 ## Phase 2 — Delivery & polish
 
 - [x] Dashboard (`frontend/`): ranked findings list + per-asset detail view, asset inventory, scan trigger with authorization gate, and an enrichment-freshness banner
 - [x] `GET /api/v1/assets`, `GET /api/v1/enrichment/status`, `PATCH /api/v1/findings/{id}` (status updates)
-- [ ] Deployment guide (beyond local `docker compose up`)
-- [ ] Demo script / one-pager for presenting the finished pipeline
+- [x] Deployment guide ([DEPLOYMENT.md](DEPLOYMENT.md)) — verified against a real Postgres 16 stack;
+      the Dockerfile now ships hash-pinned nuclei and nmap, runs unprivileged, and `.dockerignore`
+      keeps `.env` and the databases out of the image
+- [x] Demo script ([DEMO.md](DEMO.md))
+- [x] Dashboard redesign (design-system pass): a token-based design system, WCAG 2.1 AA (zero axe violations on
+      every screen), keyboard-operable tables and tabs, URL-driven filters/sort/pagination, search, scan
+      history with persisted warnings, an Evidence view linked from findings, and editable asset criticality
+      (manual decisions survive re-scans and re-rank that asset immediately). See [frontend/README.md](../frontend/README.md).
+- [x] Dashboard visual redesign: a light theme, a left sidebar
+      (a top bar on phones), a page header with a "New scan" action on every screen, and a new
+      **Overview** landing page (KPI cards, Top risks, Risk breakdown chart, Recent scans) backed by
+      `GET /api/v1/overview`. Layout patterns follow the reference in `docs/design/`; no other vendor's
+      branding or content was used. Contrast was checked pairing by pairing and every screen was audited with axe.
+- [x] Frontend end-to-end test (`npm run test:e2e`): 100 checks in a real browser, incl. registration, session
+      persistence, domain verification, cross-account isolation, and axe on every screen
+- [x] **Accounts and domain ownership** — the product moved from single-operator to per-user.
+      - Schema (`0004`, `0005`): `users`, `domains`, `auth_sessions`; nullable `user_id`/`domain_id` on scans and
+        assets; asset identity is now per owner. Additive, `tenant_id` kept. Verified on SQLite and PostgreSQL 16.
+      - Auth: Argon2id passwords, JWT access tokens (~15 min), rotating refresh tokens in an httpOnly cookie with
+        replay detection, sign-in throttling, and one generic message for every failed sign-in
+        (`core/security.py`, `core/throttle.py`, `api/auth.py`).
+      - Ownership: a scan takes a **verified `domain_id`**, never an `authorized: true` claim. Domains are proven
+        with a DNS TXT record (`core/verification.py`); first to prove control owns it.
+      - Isolation: every endpoint is scoped to the caller; another user's record answers 404, identical to a
+        missing one. 14 tests exist only to try to cross that line.
+      - Dashboard: sign-in/registration, a Domains screen with the record to publish, and a scan form that picks a
+        verified domain.
+      - Data from before accounts has no owner and is invisible until `scripts/claim_legacy.py` assigns it.
+      - **Not yet**: email verification, password reset, and "sign out everywhere".
+- [ ] One-pager / slide deck
+
+## Testing levels (see [RULES_OF_ENGAGEMENT.md](RULES_OF_ENGAGEMENT.md))
+
+- [x] **Level 1 — unit/integration:** scope, adapters, profiles, nuclei parsing (including
+      malformed JSONL and records captured from the real binary), migrations, scoring,
+      ingestion, API
+- [x] **Level 1 — Docker vulnerable lab:** pinned Apache 2.4.49 / 2.4.50 with an
+      intentionally opened config, bound to loopback ([lab/](../lab/README.md))
+- [x] **Level 2 — authorized public target:** `scanme.nmap.org`, opt-in, port/service
+      discovery only (`tests/integration/test_public_targets.py`)
+- [ ] **Level 3 — own infrastructure:** deferred until a VPS exists, by explicit choice.
 
 ## Phase 3 — Scale features (originally listed in README, deferred past v1 per [PRD §6](PRD.md#6-out-of-scope-for-v1))
 
 - [ ] Cloud connector support (AWS/Azure/GCP asset inventory)
-- [ ] Asset criticality tagging UI (replacing manual `asset_criticality` rows)
+- [x] ~~Asset criticality tagging UI~~ — done in the dashboard redesign
 - [ ] Slack/Jira integration (`integrations/`)
+- [ ] Organisations/teams (several people sharing one set of domains) — deliberately out of scope for now
 - [ ] Multi-tenant support with row-level security
 - [ ] Graph-based blast-radius analysis
 - [ ] Learned scoring model (trained on confirmed-exploit outcomes)

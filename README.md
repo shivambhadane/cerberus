@@ -32,7 +32,12 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | [API Documentation](docs/API.md) | Every endpoint, request/response shape, auth |
 | [Database Schema](docs/DATABASE_SCHEMA.md) | Tables, relationships, and why they're designed that way |
 | [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md) | What Cerberus is allowed to scan, and how |
+| [Code map](docs/code.md) | Every directory and file: what it does and where to change things |
 | [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
+| [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, and what was and wasn't verified |
+| [Demo script](docs/DEMO.md) | A 10-minute walkthrough, including where the tool is honest about its limits |
+| [Validation](docs/VALIDATION.md) | What a real end-to-end run against the lab produced, including the bugs it found |
+| [Test lab](lab/README.md) | The pinned, intentionally vulnerable Docker targets used for Level 1 validation |
 
 ## Problem Statement
 
@@ -132,9 +137,10 @@ Each stage takes a clearly-typed input and produces a clearly-typed output, so t
 
 | Layer | Technology |
 |---|---|
-| Discovery | Pure-Python CT log + DNS enumeration, async TCP connect scan, HTTP/banner fingerprinting (`subfinder` used when installed) |
+| Discovery | Interchangeable scanner adapters: crt.sh, subfinder, async TCP connect, nmap, HTTP/banner probing |
+| Vulnerability detection | nuclei, governed by scan profiles (allowlisted templates, non-overridable safety floor) |
 | Backend / API | Python 3.11+, FastAPI |
-| Database | PostgreSQL, or SQLite for zero-setup local runs (SQLAlchemy 2.x) |
+| Database | PostgreSQL, or SQLite for zero-setup local runs (SQLAlchemy 2.x); schema managed by Alembic |
 | Scoring | Python module, importable and independently deployable |
 | Frontend | React 18 + TypeScript, built with Vite |
 | Deployment | Docker Compose (Postgres + API) |
@@ -163,10 +169,43 @@ Optional paid upgrades (not required to run Cerberus): Shodan/Censys (internet-w
 ### Prerequisites
 
 - Python 3.11+
-- Docker & Docker Compose (optional - only for running Postgres and the API in containers)
+- Docker & Docker Compose (optional - Postgres, the API, and the [test lab](lab/README.md))
+- `nmap` (recommended - service/version detection; a pure-Python scan is used when absent)
+- `nuclei` (recommended - **active detection**; see below)
 - `subfinder` (optional - Cerberus uses certificate transparency logs when it is absent)
 
-Discovery runs in pure Python, so no Go toolchain is required to scan.
+Every external tool is optional and is an interchangeable adapter: Cerberus runs whichever are
+installed and records which tool produced each observation.
+
+**Without nuclei, every finding is `version_inference`** - "this service reports a version NVD lists
+as affected" - which is a claim about the version, not a test of the host. With nuclei, findings a
+probe actually matched are marked `active_detection`. Install it and its templates
+(`nuclei -update-templates`) to get the stronger evidence.
+
+### Quick start
+
+One script does everything: dependencies, the database, the exploitation data, and both servers.
+
+```bash
+git clone https://github.com/shivambhadane/cerberus.git
+cd cerberus
+./run.sh
+```
+
+Then open **http://localhost:5173**, create an account, add a domain you own, publish the DNS record
+it shows you, and scan it.
+
+| | |
+|---|---|
+| `./run.sh` | set up if needed, then start the API and dashboard |
+| `./run.sh stop` / `status` / `logs` | stop, inspect, follow |
+| `./run.sh test` | tests, lint and the dashboard build |
+| `./run.sh scan <domain>` | scan from the command line |
+| `./run.sh lab up` / `lab scan` / `lab down` | the local vulnerable target |
+| `./run.sh help` | everything else |
+
+It only stops processes it started, and if a port is busy it tells you what holds it rather than
+killing it. The rest of this section is the same thing done by hand.
 
 ### Installation
 
@@ -218,19 +257,23 @@ without it the scan is refused. See [Rules of Engagement](docs/RULES_OF_ENGAGEME
 ### Running the API
 
 ```bash
-uvicorn api.main:app --reload          # http://localhost:8000/docs
+uvicorn api.main:app --reload          # http://localhost:8000/docs   (or: ./run.sh api)
 ```
 
-All endpoints except `/healthz` require `Authorization: Bearer $API_SECRET_KEY`.
+All endpoints except `/healthz` and `/api/v1/auth/*` require a signed-in user
+(`Authorization: Bearer <access token>` from `POST /api/v1/auth/login`). Everything you can reach is
+your own: another account's data answers 404. Scans name a domain you have verified with a DNS TXT
+record, so there is no "I am authorised" flag to send. See [docs/API.md](docs/API.md#1-authentication).
 
 ### Running the dashboard
 
 ```bash
-cd frontend && npm install && npm run dev     # http://localhost:5173
+cd frontend && npm install && npm run dev     # http://localhost:5173   (or: ./run.sh web)
 ```
 
-The dashboard asks for the API token on first load. The API must allow its origin:
-`CORS_ORIGINS=http://localhost:5173`. See [frontend/README.md](frontend/README.md).
+The dashboard asks you to create an account on first load. Add a domain, prove you own it with the DNS
+TXT record it gives you, and then you can scan it. The API must allow the dashboard's origin:
+`CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (already set in `.env.example`). See [frontend/README.md](frontend/README.md).
 
 ### Viewing the landing page
 
@@ -239,8 +282,25 @@ A single static file with no build step — see [landing/README.md](landing/READ
 ### Running the tests
 
 ```bash
-pytest -q
+pytest -q                                   # unit + integration; hermetic, no network
 ```
+
+Testing is in three levels, and each is a different claim:
+
+| Level | What | How |
+|---|---|---|
+| 1 | Local: unit tests, malformed input, records captured from the real tools, and the [Docker lab](lab/README.md) | `pytest -q`; `docker compose -f lab/docker-compose.yml up -d` for the lab |
+| 2 | Authorized public target (`scanme.nmap.org`), port/service discovery only | `CERBERUS_PUBLIC_TESTS=1 pytest tests/integration -v` (opt-in: it contacts a third party) |
+| 3 | Your own infrastructure: VPS, several subdomains, deliberately vulnerable services | not yet built |
+
+### Database migrations
+
+```bash
+python scripts/init_db.py      # creates or upgrades the schema (also runs at API startup)
+```
+
+A database created before migrations existed is adopted only if its schema matches; otherwise
+Cerberus refuses with a clear error rather than mark it current while columns are missing.
 
 ## Configuration
 
@@ -279,8 +339,15 @@ integrations:
 ### CLI
 
 ```bash
-# Run full discovery + scan + score pipeline
+# Run full discovery + scan + score pipeline (default profile: safe)
 cerberus scan --target example.com --authorized
+
+# Choose what scanners may do: passive | safe | thorough
+cerberus scan --target example.com --authorized --profile passive
+cerberus scan --target example.com --authorized --profile thorough --accept-profile
+
+# Scan a local lab (private addresses are refused unless you opt in)
+cerberus scan --target 127.0.0.1 --authorized --allow-private --no-subdomains --ports 18081,18082
 
 # Re-run enrichment only (refresh KEV/EPSS/CVE data)
 cerberus enrich --refresh
@@ -288,6 +355,12 @@ cerberus enrich --refresh
 # View top-ranked findings
 cerberus report --top 10
 ```
+
+Scan profiles are the security boundary for what runs against a target - see
+[Rules of Engagement §4](docs/RULES_OF_ENGAGEMENT.md#4-scan-profiles). `passive` never contacts the
+target; `safe` (default) runs non-destructive detection only; `thorough` must be requested
+explicitly. Destructive template categories and local-execution protocols are refused by every
+profile.
 
 ### API
 
@@ -324,14 +397,18 @@ higher because attackers are actually using it.
 
 ```
 cerberus/
-├── core/                 # Config, database session, ORM models, pipeline orchestration
-├── discovery/            # Subdomain enum, port scanning, technology fingerprinting
+├── core/                 # Config, DB + migrations, models, pipeline, scope, scan profiles,
+│                         #   scanner-adapter contracts, retrying HTTP client, tool runner
+├── discovery/            # Orchestration + scanner adapters (crtsh, subfinder, tcp_connect,
+│   └── adapters/         #   nmap, http_probe, nuclei)
 ├── ingestion/            # Normalization, dedupe, asset criticality tagging
 ├── enrichment/           # CVE/KEV/EPSS pullers, cache, and technology->CVE matching
 ├── scoring/              # Exploitability scoring engine
 ├── api/                  # REST API (FastAPI)
-├── tests/                # Test suite
-├── scripts/              # Schema creation and enrichment refresh
+├── migrations/           # Alembic schema migrations
+├── lab/                  # Level 1 test lab: pinned intentionally-vulnerable Docker services
+├── tests/                # Unit tests, plus integration/ for authorized public targets
+├── scripts/              # Schema migration and enrichment refresh
 ├── frontend/             # Dashboard (React + TypeScript, Vite)
 ├── landing/              # Static marketing landing page
 ├── integrations/         # Slack, Jira, webhooks (Phase 3 - not yet implemented)

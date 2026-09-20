@@ -10,7 +10,9 @@ See also: [Legal & Ethical Use](../README.md#legal--ethical-use) in the root REA
   1. Direct ownership of the target domain/infrastructure, or
   2. Written authorization from the target's owner (e.g. a signed pentest engagement letter, a bug bounty program's published scope, or a CTF/lab environment explicitly built for testing), or
   3. The target is a dedicated, intentionally vulnerable lab environment (e.g. a personal test VM, a CTF box) with no real-world stakeholder.
-- The `--authorized` flag (CLI) and `authorized: true` field ([API](API.md#post-apiv1scans)) are an operator attestation, **not** a verification mechanism. Passing the flag does not make a scan lawful — it only records that the operator claims authorization existed. Cerberus does not, and cannot, verify legal authorization on its own.
+- **Through the API and dashboard**, authorization is *proven*, not asserted: a scan names a `domain_id` the caller has verified by publishing a DNS TXT record only someone who controls the domain's DNS could publish ([API](API.md#post-apiv1domainsidverify)). There is no `authorized: true` field to send. This raises the bar from "the operator says so" to "the operator demonstrated control of the DNS", which is what domain-validated certificates rest on.
+- **On the CLI**, `--authorized` remains an operator attestation, **not** a verification mechanism. Passing the flag does not make a scan lawful — it only records that the operator claims authorization existed. The CLI is an operator tool, run by whoever controls the machine and the database.
+- Neither mechanism verifies *legal* authorization. Control of DNS is not the same as permission from the organisation that owns the system, and a bug-bounty scope can exclude hosts you do control. Cerberus cannot judge that; you must.
 - When in doubt about whether a target is in scope, do not scan it. Confirm scope in writing first.
 
 ## 2. Scope boundaries
@@ -38,7 +40,7 @@ profile names the categories permitted, and anything unnamed does not run.
 
 | Profile | Active probing | Severity | Opt-in |
 |---|---|---|---|
-| `passive` | None — certificate transparency and DNS only | n/a | no |
+| `passive` | None — certificate transparency and DNS only. The target is not contacted at all: no port scan, no service probe, no HTTP request | n/a | no |
 | `safe` (default) | Known CVEs, exposed panels/files, misconfiguration, TLS | medium and above | no |
 | `thorough` | Adds low/info severity, default-credential and unauth checks | all | **yes** |
 
@@ -66,6 +68,16 @@ For maximum control a profile can pin exact template IDs, in which case only tho
 - Rate limit, concurrency, timeout and retry counts are part of the scan profile, so intensity is a declared property of the run rather than an implementation detail. The default (`safe`) is 20 requests/second at concurrency 10.
 - Only one scan runs per tenant/target at a time (see [API §4, Rate Limiting](API.md#4-rate-limiting)) to avoid compounding load from overlapping runs.
 - Scope is enforced in code ([core/scope.py](../core/scope.py)): hosts outside the authorized domain are refused, as are private, loopback and link-local addresses (including cloud metadata endpoints) unless a development scope explicitly permits them.
+- Permitting private addresses (needed for the [Docker lab](../lab/README.md)) is a CLI flag (`--allow-private`) or operator configuration (`discovery.allow_private_addresses`) and is deliberately **not** an API parameter: a caller able to set it could point the server at its own internal network.
+- A scanner's own account of *which host* a result belongs to is not trusted. nmap labels hosts by reverse-DNS (PTR) name, which is controlled by whoever owns the IP, so results are mapped back to the endpoints Cerberus asked about rather than to the name the tool reported.
+
+### Public test targets
+
+Level 2 testing uses `scanme.nmap.org`, whose operators authorize scanning "with Nmap or other
+port scanners" and ask that it not be hammered. That grant covers **port and service discovery
+only**. The public-target tests therefore never run nuclei, touch only ports 22 and 80, use low
+concurrency, and are opt-in (`CERBERUS_PUBLIC_TESTS=1`). Do not point a vulnerability scanner at
+a third-party host on the strength of a port-scanning grant.
 
 ## 6. Data handling for scan results
 
