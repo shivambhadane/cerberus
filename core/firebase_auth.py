@@ -22,6 +22,16 @@ GOOGLE_JWKS_URL = (
 )
 DEFAULT_FIREBASE_PROJECT_ID = "cerberus-a2be4"
 
+# Synthetic `test-firebase-token:<email>:<uid>` tokens exist so the test suite can authenticate without
+# Google. They are an authentication bypass by design (anyone who can type an email address becomes that
+# user, and the API links by email, so it means taking over an existing account). They therefore work only
+# when this variable is set, and only the test suite sets it. Never set it anywhere else.
+TEST_TOKENS_ENV = "CERBERUS_ALLOW_TEST_TOKENS"
+
+
+def test_tokens_enabled() -> bool:
+    return os.environ.get(TEST_TOKENS_ENV) == "1"
+
 _jwks_client: jwt.PyJWKClient | None = None
 _test_token_verifier: Callable[[str], dict[str, Any] | None] | None = None
 
@@ -68,8 +78,9 @@ def verify_firebase_id_token(token: str) -> dict[str, Any]:
         if mocked is not None:
             return mocked
 
-    # Check for synthetic test tokens in test environments
-    if token.startswith("test-firebase-token:"):
+    # Synthetic test tokens: honoured ONLY when explicitly enabled (see TEST_TOKENS_ENV). Without this
+    # gate the prefix alone authenticated anyone as any email address.
+    if token.startswith("test-firebase-token:") and test_tokens_enabled():
         parts = token.split(":")
         email = parts[1] if len(parts) > 1 else "test@example.com"
         uid = parts[2] if len(parts) > 2 else f"uid-{email}"

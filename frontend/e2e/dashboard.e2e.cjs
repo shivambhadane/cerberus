@@ -5,10 +5,15 @@
  *   - the API running against a database populated by the lab scan (see lab/README.md): it
  *     asserts on that data (136 findings, 5 actively exploited, one probe-confirmed finding,
  *     2 assets, five observations)
- *   - `npm run dev` serving the dashboard on :5173
- *   - DATABASE_URL exported to this process too, and equal to the API's: the test registers a real
- *     account through the UI, then runs scripts/claim_legacy.py (to give that account the lab data)
- *     and a small seed (to mark a domain verified, since DNS cannot be published from a test)
+ *   - `npm run dev` serving the dashboard on :5173 (E2E_WEB / E2E_API override the two origins)
+ *   - DATABASE_URL exported to this process too, and equal to the API's: the test creates an account,
+ *     then runs scripts/claim_legacy.py (to give that account the lab data) and a small seed (to mark
+ *     a domain verified, since DNS cannot be published from a test)
+ *
+ * SIGN-IN: the dashboard signs people in with Firebase (Google, GitHub, email), and driving that form
+ * would create real accounts in a real Firebase project. So this test signs in through the API's local
+ * email/password endpoints instead (`/api/v1/auth/register`, `/login`), which set the same refresh
+ * cookie the dashboard picks its session back up from. The Firebase sign-in itself is not covered here.
  *   - Google Chrome installed (it uses the system browser, so there is nothing to download)
  *
  * WARNING: it creates accounts and edits an asset's criticality. Point the API at a COPY:
@@ -32,6 +37,8 @@ if (!process.env.DATABASE_URL) {
 }
 fs.mkdirSync(SP, { recursive: true });
 
+const WEB = process.env.E2E_WEB || "http://localhost:5173";
+const API = process.env.E2E_API || "http://localhost:8000";
 const ROOT = path.resolve(__dirname, "..", "..");
 const PY = process.env.E2E_PYTHON ||
   (fs.existsSync(path.join(ROOT, ".venv/bin/python")) ? path.join(ROOT, ".venv/bin/python") : "python3");
@@ -39,6 +46,7 @@ const py = (...args) => execFileSync(PY, args, { cwd: ROOT, env: process.env, en
 
 const RUN = Date.now();
 const EMAIL = `e2e-${RUN}@example.com`;
+const NAME = `e2e-${RUN}`; // no name was given, so the dashboard shows the part before the @
 const PASSWORD = "correct horse battery staple";
 const DOMAIN = `e2e-${RUN}.example.test`;
 
@@ -69,38 +77,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // Navigate by URL and wait until the destination has actually rendered. Every screen has a
   // table, so waiting on "tbody tr" alone can match the screen we just left.
   const go = async (route, title) => {
-    await page.goto(`http://localhost:5173/platform/#/${route}`, { waitUntil: "networkidle" });
+    await page.goto(`${WEB}/platform/#/${route}`, { waitUntil: "networkidle" });
     await page.waitForFunction((t) => document.querySelector("h1")?.textContent === t, title);
   };
 
   // ------------------------------------------------------------------ accounts
-  await page.goto("http://localhost:5173/platform/", { waitUntil: "networkidle" });
+  await page.goto(`${WEB}/platform/`, { waitUntil: "networkidle" });
   await page.waitForSelector('h2:has-text("Sign in")');
   check("a signed-out visitor sees the sign-in form and no data", (await page.locator(".nav").count()) === 0);
   check("the sign-in page has one h1 and a main landmark", (await page.locator("h1").count()) === 1 && (await page.locator("main").count()) === 1);
   await axe("sign-in");
 
-  // wrong credentials: one generic message, whichever part was wrong
-  await page.fill('input[type="email"]', "nobody@example.com");
-  await page.fill('input[type="password"]', "definitely wrong password");
-  await page.click('button[type="submit"]');
-  await page.waitForSelector('[role="alert"]');
-  check("bad credentials get one generic, actionable message", /incorrect/i.test(await page.locator('[role="alert"]').innerText()));
-  check("the password field is cleared after a failed attempt", (await page.inputValue('input[type="password"]')) === "");
-
-  // create an account: the API's own message for a weak password is shown as given
-  await page.click('button:has-text("Create an account")');
-  await page.waitForSelector('h2:has-text("Create your account")');
-  await axe("create account");
-  await page.fill('input[type="email"]', EMAIL);
-  await page.fill('input[type="password"]', "abc");
-  await page.click('button[type="submit"]');
-  await page.waitForSelector('[role="alert"]');
-  check("a weak password is refused with the reason", /at least 5/i.test(await page.locator('[role="alert"]').innerText()));
-  await page.fill('input[type="password"]', PASSWORD);
-  await page.click('button[type="submit"]');
+  // The API's own sign-in rules, checked directly (the dashboard's form is Firebase's, see the header)
+  const weak = await ctx.request.post(`${API}/api/v1/auth/register`, { data: { email: EMAIL, password: "abc" } });
+  check("a weak password is refused with the reason", weak.status() === 400 && /at least 5/i.test(await weak.text()));
+  const bad = await ctx.request.post(`${API}/api/v1/auth/login`, { data: { email: "nobody@example.com", password: "definitely wrong password" } });
+  check("bad credentials get one generic 401", bad.status() === 401 && /incorrect/i.test(await bad.text()));
+  const reg = await ctx.request.post(`${API}/api/v1/auth/register`, { data: { email: EMAIL, password: PASSWORD } });
+  check("registering creates the account and sets the refresh cookie", reg.status() === 201);
+  // The flag the dashboard sets after a sign-in, so it knows to try the refresh cookie. Set once (not on
+  // every load) so that signing out really clears it, as it does for a person.
+  await page.evaluate(() => localStorage.setItem("cerberus.hadSession", "1"));
+  await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".nav-link");
-  check("registering signs the person in", (await page.locator(".who-email").innerText()) === EMAIL);
+  check("a valid session signs the person in", (await page.locator(".account-link").innerText()).includes(NAME));
   await page.waitForSelector("text=Nothing has been scanned yet");
   check("a new account starts empty and points at the first step",
     /Nothing has been scanned yet/.test(await page.locator("main").innerText()) &&
@@ -111,7 +111,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   py("scripts/claim_legacy.py", EMAIL);
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".kpi");
-  check("a reload keeps the session (silent refresh from the httpOnly cookie)", (await page.locator(".who-email").innerText()) === EMAIL);
+  check("a reload keeps the session (silent refresh from the httpOnly cookie)", (await page.locator(".account-link").innerText()).includes(NAME));
   const cookies = await ctx.cookies();
   const refresh = cookies.find((c) => c.name === "cerberus_refresh");
   check("the refresh cookie is httpOnly and SameSite=Lax", Boolean(refresh) && refresh.httpOnly && refresh.sameSite === "Lax");
@@ -121,7 +121,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ------------------------------------------------------------------ landmarks, skip link, navigation
   check("has a main landmark", (await page.locator("main").count()) === 1);
-  check("has one banner and one labelled primary nav", (await page.locator("header").count()) === 1 && (await page.locator('nav[aria-label="Primary"]').count()) === 1);
+  check("has one top bar and one labelled primary nav", (await page.locator("header.topbar").count()) === 1 && (await page.locator('nav[aria-label="Primary"]').count()) === 1);
   check("has exactly one h1", (await page.locator("h1").count()) === 1);
   check("lands on the Overview", (await page.locator("h1").innerText()) === "Overview" && /Overview · Cerberus/.test(await page.title()), await page.title());
 
@@ -134,7 +134,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("the skip link moves focus to the main content", await page.evaluate(() => document.activeElement.id === "main"));
 
   const links = await page.locator(".nav-link").allTextContents();
-  check("six destinations in the sidebar", links.join(",") === "Overview,Domains,Scans,Findings,Assets,Evidence", links.join(","));
+  check("six destinations in the sidebar (Profile lives with the account, not here)", links.join(",") === "Overview,Targets,Scans,Findings,Assets,Evidence", links.join(","));
   check("the current page is marked with aria-current", (await page.locator('.nav-link[aria-current="page"]').innerText()) === "Overview");
   await page.locator('.nav-link:has-text("Assets")').focus();
   await page.keyboard.press("Enter");
@@ -310,12 +310,44 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("a raw observation expands from the keyboard-operable button", (await page.locator("pre").count()) === 1);
   await page.screenshot({ path: `${SP}/e2e-4-evidence.png` });
 
+  // ------------------------------------------------------------------ shell and profile
+  await go("overview", "Overview");
+  check("the brand in the sidebar is not a link (it used to send people to the landing page)",
+    (await page.locator(".sidebar a").evaluateAll((els) => els.filter((a) => !a.classList.contains("nav-link")).length)) === 0);
+  check("a labelled Landing page button in the top bar points at the landing page",
+    (await page.locator('header.topbar a:has-text("Landing page")').getAttribute("href")) === "/");
+  await page.locator(".account-link").click();
+  await page.waitForSelector('h1:has-text("Profile")');
+  check("the account link opens the Profile page", (await hash()).startsWith("#/profile"), await hash());
+  const profile = await page.locator("main").innerText();
+  check("Profile shows the name, email and how the person signed in",
+    profile.includes(NAME) && profile.includes(EMAIL) && /Signed in with Email and password/.test(profile));
+  check("Profile is honest that there is no Google photo for this sign-in (initials, not a broken image)",
+    (await page.locator(".profile-card img").count()) === 0 && /initials/i.test(await page.locator(".profile-card .avatar").getAttribute("aria-label")));
+  check("Profile lists connected deployment accounts, empty here", /Nothing connected/.test(profile));
+  await axe("profile");
+  await page.screenshot({ path: `${SP}/e2e-3b-profile.png` });
+
   // ------------------------------------------------------------------ domains
-  await go("domains", "Domains");
-  await page.waitForSelector('form[aria-label="Add a domain"]');
-  await page.waitForSelector("text=No domains yet");
-  check("a new account has no domains", (await page.locator("article").count()) === 0 && /No domains yet/.test(await page.locator("main").innerText()));
-  await axe("domains (empty)");
+  await go("domains", "Targets");
+  await page.waitForSelector('form[aria-label="Add a custom domain"]');
+  await page.waitForSelector("text=No targets yet");
+  check("a new account has no targets", (await page.locator("article").count()) === 0 && /No targets yet/.test(await page.locator("main").innerText()));
+  await axe("targets (empty)");
+
+  // The Deployment path, on a server with no OAuth apps: every provider says so, and nothing can be started.
+  await page.getByLabel(/Deployment/).check();
+  await page.waitForSelector("text=Add a deployment");
+  await page.waitForSelector("article");
+  const providerCards = await page.locator("article").allInnerTexts();
+  check("the three providers are listed", providerCards.length === 3 && ["Vercel", "Netlify", "Cloudflare"].every((n) => providerCards.some((c) => c.includes(n))));
+  check("an unconfigured provider says so and offers no Connect button",
+    providerCards.every((c) => /Not set up on this server/.test(c)) && (await page.locator('article button:has-text("Connect")').count()) === 0);
+  const deployText = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+  check("the page explains that only platform addresses can be verified this way, and a custom domain still needs DNS",
+    /\*\.vercel\.app/.test(deployText) && /custom domain still needs a DNS record/.test(deployText));
+  await axe("targets (deployment, unconfigured)");
+  await page.getByLabel(/Custom domain/).check();
 
   await page.fill('input[placeholder="example.com"]', "https://not-a-bare-domain.com/path");
   await page.click('button:has-text("Add domain")');
@@ -327,13 +359,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.click('button:has-text("Add domain")');
   await page.waitForSelector("article");
   const card = page.locator("article").first();
-  check("the domain is added, normalised, and not yet verified", (await card.locator("h2").innerText()) === DOMAIN && /Not verified yet/.test(await card.innerText()));
+  check("the domain is added, normalised, and not yet verified", (await card.locator("h3").innerText()) === DOMAIN && /Not verified yet/.test(await card.innerText()));
   const cardText = await card.innerText();
   check("it shows the exact DNS record to publish", cardText.includes(`_cerberus-challenge.${DOMAIN}`) && /cerberus-verify=\S{20,}/.test(cardText) && /\bTXT\b/.test(cardText));
   check("each value can be copied by a labelled button",
     (await card.locator("button", { hasText: "Copy" }).count()) === 2 &&
     /record name for/.test(await card.locator("button", { hasText: "Copy" }).first().innerHTML()));
-  await axe("domains (pending)");
+  await axe("targets (pending)");
 
   await card.locator('button:has-text("Check verification")').click();
   await page.waitForSelector("article [role='status'] .banner");
@@ -354,7 +386,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector("article");
   check("a verified domain says so and offers to scan it", /Verified/.test(await page.locator("article").first().innerText()) && (await page.locator('article a:has-text("Scan this domain")').count()) === 1);
-  await axe("domains (verified)");
+  await axe("targets (verified)");
   await page.locator('article a:has-text("Scan this domain")').click();
   await page.waitForSelector('h1:has-text("Scans")');
   check("Scan this domain opens Scans with that domain chosen", /domain=/.test(await hash()) && (await page.locator("select").first().inputValue()) !== "" && (await page.locator("select option:checked").first().innerText()) === DOMAIN);
@@ -401,33 +433,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("signing out returns to the sign-in form", (await page.locator(".nav").count()) === 0);
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector('h2:has-text("Sign in")');
-  check("a reload after signing out stays signed out (the cookie is gone)", (await page.locator(".who-email").count()) === 0);
+  check("a reload after signing out stays signed out (the cookie is gone)", (await page.locator(".account-link").count()) === 0);
   check("the refresh cookie was removed", !(await ctx.cookies()).some((c) => c.name === "cerberus_refresh" && c.value));
 
-  await page.fill('input[type="email"]', EMAIL.toUpperCase());
-  await page.fill('input[type="password"]', PASSWORD);
-  await page.click('button[type="submit"]');
+  const again = await ctx.request.post(`${API}/api/v1/auth/login`, { data: { email: EMAIL.toUpperCase(), password: PASSWORD } });
+  check("signing back in works (and email case does not matter)", again.ok());
+  await page.evaluate(() => localStorage.setItem("cerberus.hadSession", "1"));
+  await page.reload({ waitUntil: "networkidle" }); // a hash-only navigation would not re-run the session restore
   await go("overview", "Overview");
   await page.waitForSelector(".kpi");
-  check("signing back in works (and email case does not matter)", (await page.locator(".who-email").innerText()) === EMAIL);
+  check("...and the dashboard picks that session up", (await page.locator(".account-link").innerText()).includes(NAME));
 
   const other = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  await other.addInitScript(() => localStorage.setItem("cerberus.hadSession", "1"));
+  const second = await other.request.post(`${API}/api/v1/auth/register`, { data: { email: `second-${RUN}@example.com`, password: PASSWORD } });
+  check("a second account is created", second.status() === 201);
   const op = await other.newPage();
-  await op.goto("http://localhost:5173/platform/", { waitUntil: "networkidle" });
-  await op.click('button:has-text("Create an account")');
-  await op.fill('input[type="email"]', `second-${RUN}@example.com`);
-  await op.fill('input[type="password"]', PASSWORD);
-  await op.click('button[type="submit"]');
+  await op.goto(`${WEB}/platform/`, { waitUntil: "networkidle" });
   await op.waitForSelector(".nav-link");
-  await op.goto("http://localhost:5173/platform/#/domains", { waitUntil: "networkidle" });
-  await op.waitForSelector('h1:has-text("Domains")');
+  await op.goto(`${WEB}/platform/#/domains`, { waitUntil: "networkidle" });
+  await op.waitForSelector('h1:has-text("Targets")');
   await sleep(500);
-  check("a second account cannot see the first one's domains", !(await op.locator("main").innerText()).includes(DOMAIN));
-  await op.goto("http://localhost:5173/platform/#/findings", { waitUntil: "networkidle" });
+  check("a second account cannot see the first one's targets", !(await op.locator("main").innerText()).includes(DOMAIN));
+  await op.goto(`${WEB}/platform/#/findings`, { waitUntil: "networkidle" });
   await op.waitForSelector('h1:has-text("Findings")');
   await sleep(500);
   check("...or its findings", /No findings yet/.test(await op.locator("main").innerText()));
-  await op.goto("http://localhost:5173/platform/#/scans", { waitUntil: "networkidle" });
+  await op.goto(`${WEB}/platform/#/scans`, { waitUntil: "networkidle" });
   await op.waitForSelector('h1:has-text("Scans")');
   await sleep(500);
   check("...and with no verified domain it is told to verify one first", /Verify a domain first/.test(await op.locator("main").innerText()) && (await op.locator('button:has-text("Start scan")').count()) === 0);

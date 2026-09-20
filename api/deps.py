@@ -19,6 +19,7 @@ from core.firebase_auth import (
 )
 from core.models import User, new_id, utcnow
 from core.ownership import OwnershipError, normalize_email
+from core.profile import clean_display_name, clean_picture_url, sign_in_provider
 from core.security import TokenError, decode_access_token
 
 
@@ -33,6 +34,23 @@ class ApiError(Exception):
 def get_session():
     with session_scope() as session:
         yield session
+
+
+def _sync_profile(user: User, payload: dict) -> None:
+    """Refresh what the identity provider says about the person, from its verified token.
+
+    The picture and sign-in method follow the provider (a person can change their Google photo). The
+    name is filled in only when we have none: a name the person chose here is not overwritten by
+    whatever the provider currently says.
+    """
+    picture = clean_picture_url(payload.get("picture"))
+    if picture and picture != user.picture_url:
+        user.picture_url = picture
+    method = sign_in_provider(payload)
+    if method and method != user.auth_provider:
+        user.auth_provider = method
+    if not user.name:
+        user.name = clean_display_name(payload.get("name"))
 
 
 def current_user(
@@ -53,9 +71,20 @@ def current_user(
         except OwnershipError:
             normalized_email = token_email.strip().lower()
 
+        email_verified = bool(payload.get("email_verified", False))
         user: User | None = None
         if normalized_email:
-            user = session.query(User).filter(User.email == normalized_email).first()
+            matched = session.query(User).filter(User.email == normalized_email).first()
+            # An email address is only a claim until the provider says it verified it. Firebase lets
+            # anyone sign up with any address unverified, so linking to an existing account by email
+            # alone would hand that account to whoever typed its address. A verified address may link;
+            # an unverified one may only use the account it was created as (same provider uid).
+            if matched is not None and not email_verified and matched.id != uid[:36]:
+                raise ApiError(
+                    401, "email_not_verified",
+                    "Verify your email address before signing in to an existing account.",
+                )
+            user = matched
         if user is None and uid:
             user = session.get(User, uid[:36])
 
@@ -66,10 +95,12 @@ def current_user(
                 id=user_id,
                 email=normalized_email or f"{uid}@cerberus.internal",
                 password_hash="firebase_managed",
-                name=payload.get("name") or "",
-                email_verified=bool(payload.get("email_verified", False)),
+                name=clean_display_name(payload.get("name")),
+                email_verified=email_verified,
                 is_active=True,
                 last_login_at=utcnow(),
+                picture_url=clean_picture_url(payload.get("picture")),
+                auth_provider=sign_in_provider(payload),
             )
             session.add(user)
             session.commit()
@@ -78,8 +109,9 @@ def current_user(
             if not user.is_active:
                 raise ApiError(401, "unauthorized", "Sign in to continue.")
             user.last_login_at = utcnow()
-            if payload.get("email_verified") and not user.email_verified:
+            if email_verified and not user.email_verified:
                 user.email_verified = True
+            _sync_profile(user, payload)
             session.commit()
 
         return user

@@ -14,9 +14,18 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import providers
 from api.deps import ApiError, current_user, get_session
-from api.schemas import DomainCreate, DomainList, DomainOut, VerificationInstructions, VerifyResult
-from core import verification
+from api.schemas import (
+    DomainCreate,
+    DomainList,
+    DomainOut,
+    ProviderTargetRequest,
+    ProviderVerifyRequest,
+    VerificationInstructions,
+    VerifyResult,
+)
+from core import provider_service, verification
 from core.models import Domain, User, utcnow
 from core.ownership import OwnershipError, normalize_domain
 from core.throttle import FailureLimiter, Throttled
@@ -33,7 +42,13 @@ def reset_limiters() -> None:
 
 
 def _out(domain: Domain) -> DomainOut:
-    name, value = verification.challenge_record(domain.domain, domain.verification_token)
+    on_platform = domain.verification_method in providers.PROVIDER_NAMES
+    instructions = None
+    if not on_platform:  # a DNS record only means something for a DNS-verified target
+        name, value = verification.challenge_record(domain.domain, domain.verification_token)
+        instructions = VerificationInstructions(
+            method=domain.verification_method, record_name=name, record_value=value
+        )
     return DomainOut(
         id=domain.id,
         domain=domain.domain,
@@ -41,9 +56,9 @@ def _out(domain: Domain) -> DomainOut:
         verification_method=domain.verification_method,
         verified_at=domain.verified_at,
         created_at=domain.created_at,
-        verification=VerificationInstructions(
-            method=domain.verification_method, record_name=name, record_value=value
-        ),
+        verification=instructions,
+        provider=domain.provider,
+        provider_project_id=domain.provider_project_id,
     )
 
 
@@ -64,6 +79,16 @@ def add_domain(
         name = normalize_domain(payload.domain)
     except OwnershipError as exc:
         raise ApiError(400, "invalid_domain", str(exc)) from None
+
+    platform = providers.platform_for_hostname(name)
+    if platform is not None:
+        label = providers.get_provider(platform).label
+        suffix = providers.PLATFORM_SUFFIXES[platform]
+        raise ApiError(
+            400, "use_provider",
+            f"Addresses on {suffix} cannot be verified with a DNS record, because you cannot publish one "
+            f"there. Connect your {label} account and choose the project instead.",
+        )
 
     count = session.scalar(select(func.count()).select_from(Domain).where(Domain.user_id == user.id)) or 0
     if count >= MAX_DOMAINS_PER_USER:
@@ -109,6 +134,12 @@ def verify_domain(
     """Look for the verification record now. A missing record is a normal answer (200,
     `verified: false`), not an error: DNS changes take time and the owner will try again."""
     domain = _owned(session, user, domain_id)
+    if domain.verification_method in providers.PROVIDER_NAMES:
+        raise ApiError(
+            400, "wrong_method",
+            f"{domain.domain} is verified through a connected {domain.verification_method.title()} account, "
+            "not a DNS record.",
+        )
     if domain.verification_status == "verified":
         return VerifyResult(
             verified=True, reason="verified", domain=_out(domain),
@@ -151,4 +182,61 @@ def verify_domain(
             ) from None
     return VerifyResult(
         verified=result.verified, reason=result.reason, detail=result.detail, domain=_out(domain)
+    )
+
+
+# --- platform verification (Vercel, Netlify, Cloudflare Pages) ------------------------------------------
+
+def _verify_with_platform(
+    session: Session, user: User, payload_conn: str, project_id: str, hostname: str, domain_id: str | None
+) -> DomainOut:
+    from api.providers import cipher_or_error, list_limiter, to_api_error
+    from core.provider_service import ProviderServiceError
+
+    try:
+        list_limiter.check(user.id)
+    except Throttled as exc:
+        raise ApiError(
+            429, "too_many_attempts", f"Too many attempts. Try again in {exc.retry_after} seconds.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    list_limiter.record_failure(user.id)
+    try:
+        domain = provider_service.verify_platform_target(
+            session, user, cipher_or_error(),
+            connection_id=payload_conn, project_id=project_id, hostname=hostname, domain_id=domain_id,
+        )
+    except ProviderServiceError as exc:
+        raise to_api_error(exc) from None
+    return _out(domain)
+
+
+@router.post("/provider", response_model=DomainOut)
+def add_platform_target(
+    payload: ProviderTargetRequest,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+) -> DomainOut:
+    """Add a deployment as a verified target in one step: `Add & verify`.
+
+    Ownership is decided by the platform, not by this request: `connection_id` must be the caller's own,
+    `project_id` is fetched with that connection's token, and `hostname` must be one the platform lists
+    on that project. All three come from the browser and none is trusted.
+    """
+    return _verify_with_platform(
+        session, user, payload.connection_id, payload.project_id, payload.hostname, None
+    )
+
+
+@router.post("/{domain_id}/verify/provider", response_model=DomainOut)
+def verify_platform_domain(
+    domain_id: str,
+    payload: ProviderVerifyRequest,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+) -> DomainOut:
+    """Verify an existing pending or failed target through a connected platform account."""
+    domain = _owned(session, user, domain_id)
+    return _verify_with_platform(
+        session, user, payload.connection_id, payload.project_id, domain.domain, domain.id
     )

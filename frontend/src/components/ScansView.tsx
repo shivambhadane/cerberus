@@ -187,7 +187,7 @@ export function ScansView({ onScanFinished }: { onScanFinished: () => void }) {
       )}
       {domains.data && !hasVerified && (
         <div className="panel">
-          <EmptyState title="Verify a domain first" action={<a className="btn btn-primary" href={toHash("domains", {})}>Go to Domains</a>}>
+          <EmptyState title="Verify a domain first" action={<a className="btn btn-primary" href={toHash("domains", {})}>Go to Targets</a>}>
             Cerberus only scans domains you have proven you own. Add one, publish the DNS record it gives you,
             and it will appear here ready to scan.
           </EmptyState>

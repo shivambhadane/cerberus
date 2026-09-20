@@ -56,6 +56,10 @@ cerberus/
 │   ├── pipeline.py
 │   ├── ownership.py
 │   ├── security.py
+│   ├── firebase_auth.py
+│   ├── profile.py
+│   ├── crypto.py
+│   ├── provider_service.py
 │   ├── throttle.py
 │   ├── verification.py
 │   ├── scope.py
@@ -81,16 +85,19 @@ cerberus/
 ├── scoring/                    stage 4: exploitability score
 │   └── engine.py
 │
+├── providers/                  deployment platforms: "which projects does this account control?"
+│   ├── base.py  vercel.py  netlify.py  cloudflare.py
+│
 ├── api/                        stage 5: REST API
-│   ├── main.py
+│   ├── main.py  deps.py  auth.py  domains.py  providers.py
 │   └── schemas.py
 │
 ├── frontend/                   stage 5: dashboard (React + TypeScript + Vite)
-│   └── src/  App.tsx  api.ts  types.ts  styles.css  components/
+│   └── src/  App.tsx  api.ts  types.ts  styles.css  lib/  components/
 │
 ├── migrations/                 Alembic schema migrations
 │   ├── env.py
-│   └── versions/  0001_baseline_schema.py  0002_unbound_tool_supplied_text_columns.py
+│   └── versions/  0001 … 0005  0006_user_profile_picture.py  0007_connected_providers_and_provider_targets.py
 │
 ├── scripts/                    operational scripts
 │   ├── init_db.py
@@ -124,11 +131,15 @@ cerberus/
 
 | File | What it does |
 |---|---|
-| [config.py](../core/config.py) | Loads `config.yaml` and `.env` into `Config` (`DiscoveryConfig`, `EnrichmentConfig`, `ScanningConfig`, `ScoringConfig`). Properties: `database_url` (defaults to SQLite), `nvd_api_key`, `api_secret_key`, `cors_origins`. |
+| [config.py](../core/config.py) | Loads `config.yaml` and `.env` into `Config` (`DiscoveryConfig`, `EnrichmentConfig`, `ScanningConfig`, `ScoringConfig`). Properties: `database_url` (defaults to SQLite), `nvd_api_key`, `api_secret_key`, `cors_origins`, `cookie_secure`, and the provider settings (`provider_token_keys`, `public_api_url`, `frontend_url`, `provider_credentials()`, `vercel_integration_slug`, `cloudflare_oauth_scopes`). |
 | [db.py](../core/db.py) | Engine and `session_scope()` (commit/rollback). `migrate()` builds or upgrades the schema with Alembic. A pre-migration database is adopted at the newest revision whose schema it matches (`_matching_revision`), else refused with a readable `SchemaMismatchError` (`describe_differences`). `init_db()`, `get_default_tenant()`, `redact_url()` (masks passwords). |
-| [models.py](../core/models.py) | SQLAlchemy tables: `User`, `Domain`, `AuthSession` (accounts), `Tenant` (legacy), `Scan` (incl. persisted `warnings`), `Asset`, `AssetCriticality` (incl. `source`: heuristic or manual), `CveEnrichment`, `Finding`, `ObservationRecord`, `SourceRefresh`. Text columns fed by external tools are unbounded on purpose (see VALIDATION.md bug 8). |
+| [models.py](../core/models.py) | SQLAlchemy tables: `User` (incl. `picture_url`, `auth_provider`), `Domain` (incl. the `provider_*` columns), `AuthSession` (accounts), `ConnectedProvider`, `OAuthState` (deployment providers), `Tenant` (legacy), `Scan` (incl. persisted `warnings`), `Asset`, `AssetCriticality` (incl. `source`: heuristic or manual), `CveEnrichment`, `Finding`, `ObservationRecord`, `SourceRefresh`. Text columns fed by external tools are unbounded on purpose (see VALIDATION.md bug 8). |
 | [pipeline.py](../core/pipeline.py) | `run_pipeline()` orchestrates all stages and status. `start_scan()` / `create_scan_record()` refuse without the authorization attestation. `fail_interrupted_scans()` marks scans orphaned by a restart as failed so they don't block new ones. |
 | [security.py](../core/security.py) | Passwords and tokens, and nothing else: Argon2id hashing, the length-based password policy, JWT access tokens (algorithm pinned; `alg: none` and key-confusion forgeries refused), opaque refresh tokens stored only as SHA-256. Pure functions, so an identity provider could replace it without the rest of the system noticing. |
+| [firebase_auth.py](../core/firebase_auth.py) | Verifies Firebase ID tokens (Google, GitHub, email) against Google's published keys. The synthetic `test-firebase-token:` tokens the tests use are refused unless `CERBERUS_ALLOW_TEST_TOKENS=1`. |
+| [profile.py](../core/profile.py) | What is kept from an identity provider's *verified* token and how far it is trusted: `clean_picture_url` (https only), `clean_display_name`, `sign_in_provider`. |
+| [crypto.py](../core/crypto.py) | `TokenCipher`: Fernet encryption of provider tokens at rest, bound to the row they belong to, with key rotation. The key exists only in the environment. |
+| [provider_service.py](../core/provider_service.py) | The deployment-provider rules, with no HTTP in them: start and complete an OAuth flow (single-use, user- and browser-bound `state`), store a connection, list projects, verify a platform target, disconnect, and `recheck_platform_target` before a scan. Raises `ProviderServiceError` with a stable `code`. |
 | [throttle.py](../core/throttle.py) | `FailureLimiter`: failures per key over a sliding window, for sign-in and verification. In-process, matching the single-API-process assumption. |
 | [verification.py](../core/verification.py) | DNS TXT domain verification. Keeps "the record is not there" apart from "DNS could not be asked"; the lookup is injectable, so tests never touch the network. |
 | [ownership.py](../core/ownership.py) | The ownership rule as code: `check_scan_allowed(user, domain, target)` (active user, owns the domain, domain verified, target inside it) raising `OwnershipError` with a stable `code`; `normalize_domain`, `normalize_email`. Knows nothing about passwords or HTTP. |
@@ -182,7 +193,8 @@ does **not** change the score. `score_pending_findings()` re-scores every findin
 | [main.py](../api/main.py) | FastAPI app. Startup: refuses to run with an empty or placeholder `API_SECRET_KEY`, runs migrations, fails orphaned scans. `require_auth` is a constant-time bearer check that rejects empty keys. Errors use one shape: `{"error": {"code", "message"}}`. |
 | [deps.py](../api/deps.py) | What every route depends on: `ApiError`, the database session, and `current_user` — the single place an access token becomes a `User`. Routes never see a token or a header. |
 | [auth.py](../api/auth.py) | `/api/v1/auth/*`: register, login, refresh (rotating, with replay detection), logout, me. Owns the cookie policy and the sign-in throttles. |
-| [domains.py](../api/domains.py) | `/api/v1/domains/*`: claim, list, verify. Every route scoped to the caller; someone else's domain is a 404. |
+| [domains.py](../api/domains.py) | `/api/v1/domains/*`: claim, list, verify (DNS), and add/verify through a connected platform account. Every route scoped to the caller; someone else's domain is a 404. DNS instructions are omitted for platform-verified targets. |
+| [providers.py](../api/providers.py) | `/api/v1/providers`, `/api/v1/connections/*`: list providers, start a connection, the public OAuth callback, list projects, disconnect. Maps `ProviderServiceError` to HTTP; a provider's 401 is never our 401. |
 | [schemas.py](../api/schemas.py) | Pydantic request/response models. |
 
 | Route | Purpose |
@@ -197,8 +209,21 @@ does **not** change the score. `score_pending_findings()` re-scores every findin
 | `GET/PATCH /api/v1/findings/{id}` | detail with evidence; update status |
 | `GET /api/v1/observations` | raw tool output, filter by scan/kind/tool/target |
 | `GET /api/v1/enrichment/status` | KEV/EPSS freshness |
+| `POST /api/v1/domains/provider`, `POST /api/v1/domains/{id}/verify/provider` | add / verify a deployment through a connected platform account |
+| `GET /api/v1/providers`, `POST /api/v1/providers/{p}/connect`, `GET /api/v1/providers/{p}/callback` | list providers; start an OAuth flow; the platform's redirect back (no bearer token) |
+| `GET /api/v1/connections`, `GET /api/v1/connections/{id}/projects`, `POST /api/v1/connections/{id}/disconnect` | your connected accounts; their projects; forget one |
 
 Full contract: [docs/API.md](API.md).
+
+### `providers/` — deployment-platform verification
+
+| File | What it does |
+|---|---|
+| [base.py](../providers/base.py) | The contract (`DeploymentProvider`) and the two rules shared by every provider: only platform hostnames (`*.vercel.app`, `*.netlify.app`, `*.pages.dev`) prove anything, and browser-supplied ids are validated before they go in a URL. `verify_target()` is here and is not overridden. `ProviderHttp`: HTTPS only, no redirects, bounded time and size. |
+| [vercel.py](../providers/vercel.py) | Vercel, through an *Integration* (no PKCE, no refresh token, scopes set in the Vercel console). |
+| [netlify.py](../providers/netlify.py) | Netlify OAuth (no scopes; token endpoint not in the public reference: the module says so). |
+| [cloudflare.py](../providers/cloudflare.py) | Cloudflare self-managed OAuth: PKCE, refresh tokens, scopes supplied by the operator. |
+| [\_\_init\_\_.py](../providers/__init__.py) | `get_provider(name)`, `PROVIDER_NAMES`, and `use_http()` so tests substitute the HTTP layer and never touch a real platform. |
 
 ## 10. `frontend/` — dashboard
 
@@ -207,7 +232,7 @@ system, and the accessibility guarantees: [frontend/README.md](../frontend/READM
 
 | File | What it does |
 |---|---|
-| [src/App.tsx](../frontend/src/App.tsx) | Shell: skip link, left sidebar (navigation, sign out), sign-in gate (explains a rejected key), landmarks, enrichment banner. |
+| [src/App.tsx](../frontend/src/App.tsx) | Shell: skip link, left sidebar (a non-link brand; grouped navigation), top bar (breadcrumb, **Landing page** button, account link to Profile, sign out), sign-in gate, landmarks, enrichment banner. |
 | [src/api.ts](../frontend/src/api.ts) | Typed client for every endpoint; token handling; `PAGE_SIZE`. |
 | [src/types.ts](../frontend/src/types.ts) | TypeScript shapes matching the API. |
 | [src/styles.css](../frontend/src/styles.css) | The design system: tokens (colour, 12–24px type scale, 4px spacing, controls, focus) then components. The only place anything is styled. |
@@ -222,6 +247,10 @@ system, and the accessibility guarantees: [frontend/README.md](../frontend/READM
 | [components/CriticalityEditor.tsx](../frontend/src/components/CriticalityEditor.tsx) | Shows whether criticality is *inferred* or *set by you*, and edits it (re-ranks the asset's findings). |
 | [components/AssetsView.tsx](../frontend/src/components/AssetsView.tsx) | Asset inventory with inline criticality editing and links to an asset's findings and evidence. |
 | [components/ObservationsView.tsx](../frontend/src/components/ObservationsView.tsx) | "Evidence" screen: raw observations, filterable by kind, asset, or scan. |
+| [components/ProfileView.tsx](../frontend/src/components/ProfileView.tsx) | Profile page: photo, name, email, sign-in method, last sign-in (from the provider's verified token), and the list of connected deployment accounts. |
+| [components/Avatar.tsx](../frontend/src/components/Avatar.tsx) | The person's photo, or initials when there is none or it fails to load (`referrerPolicy="no-referrer"`). |
+| [components/DomainsView.tsx](../frontend/src/components/DomainsView.tsx) | "Targets": the choice between **Custom domain** (DNS TXT) and **Deployment**, and each target with how it was verified. |
+| [components/DeploymentProviders.tsx](../frontend/src/components/DeploymentProviders.tsx) | The Deployment path: a card per provider (connect, project list, Add & verify, disconnect). Refuses to navigate to anything that is not `https:`. |
 | [components/ScansView.tsx](../frontend/src/components/ScansView.tsx) | Start-scan form (profile picker, opt-in gates) plus scan history with the warnings a scan finished with. |
 | [components/EnrichmentBanner.tsx](../frontend/src/components/EnrichmentBanner.tsx) | Warns when the KEV cache is empty or stale. |
 | [e2e/dashboard.e2e.cjs](../frontend/e2e/dashboard.e2e.cjs) | Real-Chrome end-to-end + axe accessibility test (`npm run test:e2e`). |
@@ -243,6 +272,9 @@ A finding is one `(asset, CVE)` pair (unique) carrying `risk_score`, `reasoning`
 - [migrations/versions/0001_baseline_schema.py](../migrations/versions/0001_baseline_schema.py) — full initial schema.
 - [migrations/versions/0002_unbound_tool_supplied_text_columns.py](../migrations/versions/0002_unbound_tool_supplied_text_columns.py) — widened columns fed by external tools.
 - [migrations/versions/0003_scan_warnings_and_criticality_source.py](../migrations/versions/0003_scan_warnings_and_criticality_source.py) — `scans.warnings`, `asset_criticality.source`.
+- [migrations/versions/0004…0005](../migrations/versions/) — users, domains, auth sessions, per-user asset identity.
+- [migrations/versions/0006_user_profile_picture.py](../migrations/versions/0006_user_profile_picture.py) — `users.picture_url`, `users.auth_provider`.
+- [migrations/versions/0007_connected_providers_and_provider_targets.py](../migrations/versions/0007_connected_providers_and_provider_targets.py) — `connected_providers`, `oauth_states`, and the `provider_*` columns on `domains`.
 - [migrations/env.py](../migrations/env.py) — reads the URL from `core.config`; deliberately does not reconfigure application logging.
 - Change the schema: edit `core/models.py`, then `alembic revision --autogenerate -m "..."`, review, commit.
 
@@ -251,12 +283,14 @@ A finding is one `(asset, CVE)` pair (unique) carrying `risk_score`, `reasoning`
 | Where | What |
 |---|---|
 | [config.yaml](../config.yaml) | `discovery` (ports, timeouts, exclusions, `allow_private_addresses`), `scanning.profile`, `enrichment`, `scoring.weights`, `integrations` (unused) |
-| `.env` | `DATABASE_URL`, `NVD_API_KEY`, `API_SECRET_KEY` (**required**), `CORS_ORIGINS`, `POSTGRES_PASSWORD` (compose) |
-| env flags | `CERBERUS_ALLOW_INSECURE_DEV=1` (allow placeholder API key, throwaway use only); `CERBERUS_PUBLIC_TESTS=1` (enable the `scanme.nmap.org` tests) |
+| `.env` | `DATABASE_URL`, `NVD_API_KEY`, `API_SECRET_KEY` (**required**), `CORS_ORIGINS`, `POSTGRES_PASSWORD` (compose), `COOKIE_SECURE`, `FIREBASE_PROJECT_ID` |
+| `.env` (deployment providers, optional) | `PROVIDER_TOKEN_ENCRYPTION_KEY`, `PUBLIC_API_URL`, `FRONTEND_URL`, `VERCEL_CLIENT_ID` / `_SECRET` / `VERCEL_INTEGRATION_SLUG`, `NETLIFY_CLIENT_ID` / `_SECRET`, `CLOUDFLARE_CLIENT_ID` / `_SECRET` / `CLOUDFLARE_OAUTH_SCOPES`. See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-deployment-providers) |
+| env flags | `CERBERUS_ALLOW_TEST_TOKENS=1` (test suite only: accepts synthetic sign-in tokens, i.e. lets anyone sign in as anyone; never set it); |
+| env flags (dev) | `CERBERUS_ALLOW_INSECURE_DEV=1` (allow placeholder API key, throwaway use only); `CERBERUS_PUBLIC_TESTS=1` (enable the `scanme.nmap.org` tests) |
 
 ## 14. Tests
 
-Counts are test functions; parametrised tests expand to more cases (210 collected, 5 skipped by default).
+Counts are test functions; parametrised tests expand to more cases (these counts predate the deployment-provider work for the older files; run `pytest --collect-only -q` for the current total).
 
 | File | Covers |
 |---|---|
@@ -264,7 +298,14 @@ Counts are test functions; parametrised tests expand to more cases (210 collecte
 | [test_adapters.py](../tests/test_adapters.py) (19) | adapter contract, nmap parsing incl. the PTR bug, endpoint dedupe, config reaching adapters, passive-means-passive |
 | [test_api.py](../tests/test_api.py) (22) | auth (incl. empty-key bypass), filters, profile gating, scan conflicts |
 | [test_api_views.py](../tests/test_api_views.py) (22) | dashboard API: search/status/detection filters, NULL-last sorting, paging, scan history and warnings, evidence by target, criticality editing (manual survives re-scan, only that asset re-scored) |
-| [test_migrations.py](../tests/test_migrations.py) (14) | fresh / legacy / drifted databases, adoption at the matching revision, readable refusals, data survival, logging left intact |
+| [test_migrations.py](../tests/test_migrations.py) (20) | fresh / legacy / drifted databases, adoption at the matching revision, readable refusals, data survival, logging left intact; the provider migrations are additive, constrained, and undo/redo cleanly |
+| [test_crypto.py](../tests/test_crypto.py) (10) | tokens encrypted at rest, bound to their row, key rotation, tampering and wrong keys refused |
+| [test_profile.py](../tests/test_profile.py) (14, 26 cases) | picture URLs (https only), names, sign-in method; what a Google sign-in records and refreshes; the profile never exposes credentials; an unverified email cannot take over an existing account |
+| [test_provider_clients.py](../tests/test_provider_clients.py) (44, 68 cases) | each provider's requests and response parsing against fakes of the documented responses; platform-hostname rule; id validation |
+| [test_providers_api.py](../tests/test_providers_api.py) (42) | connect / callback / list / disconnect: state single-use, expiry, wrong browser, wrong user, replay, redirect URI, no token in any response |
+| [test_provider_ownership.py](../tests/test_provider_ownership.py) (36, 45 cases) | Add & verify: what the platform must say, forged ids, custom domains refused, first-to-verify, scan-time re-check and `ownership_lost`, DNS verification and scan authorization unchanged |
+| [test_provider_isolation.py](../tests/test_provider_isolation.py) (13) | another user's connection, project, domain and state answer 404 |
+| [test_firebase_auth.py](../tests/test_firebase_auth.py) (7) | Firebase token verification, provisioning, linking, expiry; the synthetic test token is refused unless the suite enables it |
 | [test_profiles.py](../tests/test_profiles.py) (14) | the safety floor cannot be lifted |
 | [test_pipeline.py](../tests/test_pipeline.py) (8) | authorization refusal, cache warnings, orphaned scans |
 | [test_proc.py](../tests/test_proc.py) (8) | stdin always closed, failures explicit |
@@ -290,6 +331,7 @@ Run: `pytest -q`. Lab: `docker compose -f lab/docker-compose.yml up -d`.
 | map a new banner name to a CPE | `PRODUCT_ALIASES` in `enrichment/sources.py` |
 | add a table or column | `core/models.py`, then an Alembic migration |
 | add an API endpoint | `api/main.py` + `api/schemas.py`, document in `docs/API.md`, call from `frontend/src/api.ts` |
+| add a deployment provider | `providers/<name>.py`, a branch in `providers/__init__.py`, the frontend constants: [API.md §4.8](API.md#48-how-to-add-a-provider) |
 | add a dashboard view | new file in `frontend/src/components/`, add its name to `TABS` in `lib/router.ts` and to `NAV` in `App.tsx` |
 
 ## 16. Generated or ignored
@@ -300,5 +342,5 @@ None are committed, and `.dockerignore` keeps secrets and databases out of the i
 ## 17. Not implemented
 
 `integrations/` (Slack/Jira), cloud
-connectors, multi-tenant isolation, queue/worker separation, frontend unit/component tests (an end-to-end test exists). See
+connectors, revoking a provider token at the platform on disconnect, multi-tenant isolation, queue/worker separation, frontend unit/component tests (an end-to-end test exists). See
 [docs/ROADMAP.md](ROADMAP.md).

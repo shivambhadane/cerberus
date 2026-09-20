@@ -16,6 +16,9 @@
 erDiagram
     USERS ||--o{ DOMAINS : claims
     USERS ||--o{ AUTH_SESSIONS : signs_in
+    USERS ||--o{ CONNECTED_PROVIDERS : connects
+    USERS ||--o{ OAUTH_STATES : starts
+    CONNECTED_PROVIDERS ||--o{ DOMAINS : verifies
     DOMAINS ||--o{ SCANS : scoped_to
     DOMAINS ||--o{ ASSETS : contains
     TENANTS ||--o{ SCANS : runs
@@ -42,6 +45,35 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
         timestamptz last_login_at
+        text picture_url
+        text auth_provider
+    }
+
+    CONNECTED_PROVIDERS {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text provider_account_id
+        text account_label
+        text access_token_encrypted
+        text refresh_token_encrypted
+        timestamptz token_expires_at
+        text scopes
+        json extra
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    OAUTH_STATES {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text state_hash UK
+        text browser_hash
+        text code_verifier_encrypted
+        timestamptz created_at
+        timestamptz expires_at
+        timestamptz used_at
     }
 
     AUTH_SESSIONS {
@@ -62,6 +94,10 @@ erDiagram
         text verification_method
         text verification_status
         timestamptz verified_at
+        text provider
+        uuid provider_connection_id FK
+        text provider_project_id
+        text provider_resource_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -164,12 +200,16 @@ A person who signs in. Authentication (passwords, sessions) lives at the API bou
 |---|---|---|
 | `id` | uuid, PK | |
 | `email` | text, **unique** | stored lower-case (`normalize_email`), so `A@x.com` and `a@x.com` are one account |
-| `password_hash` | text | a slow-KDF hash, never the password |
+| `password_hash` | text | a slow-KDF hash, never the password. `firebase_managed` for accounts whose sign-in is handled by Firebase (Google, GitHub, email): there is no local password to hash |
 | `name` | text | |
 | `email_verified` | boolean | default `false` |
 | `is_active` | boolean | default `true`; a disabled account cannot scan |
 | `created_at`, `updated_at` | timestamptz | |
 | `last_login_at` | timestamptz, nullable | |
+| `picture_url` | text, nullable | the sign-in provider's profile photo (a Google photo). An `https` URL only: anything else is dropped before it is stored (`core/profile.py`). Refreshed on each sign-in |
+| `auth_provider` | varchar(32), nullable | how the person signed in: `google.com`, `github.com` or `password`. Read from the provider's verified token, not from the client. `NULL` for accounts that have only used the local password login |
+
+`name` is filled from the provider's token only while it is empty, so a name the person chose is never overwritten by the provider's. Both new columns are read from the *verified* token, never from a request body.
 
 ### `auth_sessions`
 One refresh token, server side. A sign-in starts a **family**; each refresh adds a row to the same family and marks the previous one `rotated_at`. Signing out (or detecting a replay) sets `revoked_at` across the family.
@@ -195,14 +235,57 @@ A domain a user says they own. It can be scanned only once **verified**.
 | `user_id` | uuid, FK → users.id | the claimant |
 | `domain` | text | stored normalised (`normalize_domain`): lower-case, no scheme, path, port or trailing dot; IP addresses and wildcards are refused |
 | `verification_token` | text | unguessable value the owner publishes to prove control |
-| `verification_method` | text | `dns_txt` (default) \| `http_file` |
+| `verification_method` | text | `dns_txt` (default), `http_file`, or `vercel` \| `netlify` \| `cloudflare` when a connected platform account proved it |
 | `verification_status` | text | `pending` (default) \| `verified` \| `failed` |
 | `verified_at` | timestamptz, nullable | |
+| `provider` | varchar(16), nullable | `vercel` \| `netlify` \| `cloudflare` when a platform account proved it, else `NULL` |
+| `provider_connection_id` | uuid, nullable, FK → connected_providers.id | which connection proved it. Cleared (not the row) when that connection is disconnected |
+| `provider_project_id` | text, nullable | the platform's id of the project. Kept after a disconnect so the target can be verified again |
+| `provider_resource_id` | text, nullable | the team or account the project sat under, as the platform reported it |
 | `created_at`, `updated_at` | timestamptz | |
+
+The four `provider_*` columns are all nullable, so every existing (DNS-verified) domain is untouched by them.
 
 Verification is a DNS TXT record: the owner publishes `_cerberus-challenge.<domain>  TXT  "cerberus-verify=<token>"`, and `POST /api/v1/domains/{id}/verify` looks it up (`core/verification.py`).
 
-Constraints: `(user_id, domain)` is unique, so a user cannot claim a domain twice. **Claims are not unique, proof is:** a partial unique index (`uq_domain_one_verified_owner`, `WHERE verification_status = 'verified'`) means anyone may *claim* any domain, but only one user can hold it *verified*. Whoever proves control first owns it, and a domain can move to someone else only after the first owner's status leaves `verified`.
+Constraints: `(user_id, domain)` is unique, so a user cannot claim a domain twice. **Claims are not unique, proof is:** a partial unique index (`uq_domain_one_verified_owner`, `WHERE verification_status = 'verified'`) means anyone may *claim* any domain, but only one user can hold it *verified*. Whoever proves control first owns it, and a domain can move to someone else only after the first owner's status leaves `verified`. The index does not care *how* it was proved, so a DNS proof and a platform proof compete under the same rule.
+
+A target proved through a platform is *also* re-checked with that platform before each scan (see [API.md §4.5](API.md#45-scan-authorization-is-unchanged)); if the platform no longer vouches for it, `verification_status` becomes `failed` and `verified_at` is cleared. A disconnect sets the targets that connection verified back to `pending`.
+
+### `connected_providers`
+A user's connection to a deployment-platform account (Vercel, Netlify, Cloudflare Pages). Cerberus uses it for one thing: asking the platform, with the user's own authorisation, which projects that account controls. See [API.md §4](API.md#4-deployment-providers).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid, PK | also the context each token ciphertext is bound to |
+| `user_id` | uuid, FK → users.id | the owner; every query is filtered by it |
+| `provider` | varchar(16) | `vercel` \| `netlify` \| `cloudflare` |
+| `provider_account_id` | varchar(128) | the account's id **at the provider**, read from the provider's API with the fresh token. Never taken from the browser |
+| `account_label` | varchar(255) | a display name (`Vercel: shivam-dev`); not used for any decision |
+| `access_token_encrypted` | text | Fernet ciphertext, bound to this row's `id` (`core/crypto.py`) |
+| `refresh_token_encrypted` | text, nullable | as above; only for providers that issue refresh tokens |
+| `token_expires_at` | timestamptz, nullable | when the access token stops working |
+| `scopes` | text | the scopes granted, space-separated, for display |
+| `extra` | json | non-secret details needed to call the provider later (a Vercel team id). Never a token |
+| `created_at`, `updated_at` | timestamptz | |
+
+Constraint: `(user_id, provider, provider_account_id)` is unique, so reconnecting the same account updates its row instead of adding another. **Tokens are never returned by the API or sent to the browser**, and the columns hold ciphertext only: reading this table (a backup, a leaked dump) does not reveal a usable credential without `PROVIDER_TOKEN_ENCRYPTION_KEY`, which is not stored here. Deleting a connection (disconnect) deletes its tokens.
+
+### `oauth_states`
+One in-flight OAuth authorisation. Single-use, short-lived (10 minutes), and bound to a user and a browser.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid, PK | |
+| `user_id` | uuid, FK → users.id | who started the flow |
+| `provider` | varchar(16) | a callback for a different provider is refused |
+| `state_hash` | varchar(64), **unique** | SHA-256 of the `state` sent to the provider. The state itself is never stored |
+| `browser_hash` | varchar(64) | SHA-256 of a random value also set as an httpOnly cookie in the browser that started the flow. A callback from any other browser does not carry it |
+| `code_verifier_encrypted` | text, nullable | the PKCE verifier (Cloudflare), encrypted and bound to this row |
+| `created_at`, `expires_at` | timestamptz | |
+| `used_at` | timestamptz, nullable | set the moment a callback is first seen, before anything else can fail, so a replay never gets a second attempt |
+
+Only hashes are stored, so reading this table reveals nothing that can complete a flow. A user's expired rows are deleted when they start another; there is a cap of 10 unfinished flows per user.
 
 ### `scans`
 One row per pipeline run. Status tracks progress through discovery → ingestion → enrichment → scoring.
@@ -331,6 +414,8 @@ so the timestamp always reflects a full refresh.
 - `assets (user_id, hostname, port, protocol) WHERE user_id IS NOT NULL`, **unique** — one asset per owner
 - `assets (tenant_id, hostname, port, protocol) WHERE user_id IS NULL`, **unique** — the same rule for unowned legacy rows
 - `auth_sessions (user_id)`, `auth_sessions (family_id)`, `auth_sessions (token_hash)` unique
+- `connected_providers (user_id)`; `connected_providers (user_id, provider, provider_account_id)`, **unique** — one row per connected account
+- `oauth_states (user_id)`; `oauth_states (state_hash)`, **unique**
 
 ## 5. Migrations
 
@@ -349,7 +434,8 @@ schema indistinguishable from the models, which is what stops models and migrati
 apart.
 
 Revisions so far: `0001` baseline, `0002` unbound tool-supplied text columns, `0003` scan warnings and
-criticality source, `0004` users and domains, `0005` auth sessions and per-user asset identity.
+criticality source, `0004` users and domains, `0005` auth sessions and per-user asset identity,
+`0006` user profile picture and sign-in method, `0007` connected providers and provider-verified targets.
 
 `0004` is purely additive: `tenant_id` stays, and the new `user_id`/`domain_id` columns on `scans` and
 `assets` are nullable, so existing rows keep working with no owner. Nothing is invented for them: a
@@ -359,6 +445,22 @@ fabricated user would attribute old scans to someone who never ran them. It was 
 `0005` adds `auth_sessions` and changes what makes an asset "the same asset" from per-tenant to
 per-owner. Downgrading it restores the per-tenant constraint, which fails if two users by then hold
 the same `host:port` — correctly, because the data no longer fits the old model.
+
+`0006` adds two nullable columns to `users` (`picture_url`, `auth_provider`). Existing accounts simply
+have neither until their next sign-in.
+
+`0007` adds `connected_providers` and `oauth_states`, and four nullable `provider_*` columns on
+`domains`. It is purely additive and touches nothing the scanner reads. Downgrading it drops them (and
+therefore any stored connections: people reconnect), and every domain keeps its DNS verification.
+
+`0006` and `0007` together (`0005 → 0007 → 0005 → 0007`) were run on SQLite (copies of the project's
+real development databases: one adopted at `0002`, one at `0005` holding 4 users and a domain) and on
+PostgreSQL 16.15 with a user and a DNS-verified domain seeded beforehand. After each step the user and
+domain row counts were unchanged; on PostgreSQL the seeded domain still read `dns_txt` / `verified` with
+`provider` `NULL`; and after the final upgrade Alembic's autogenerate comparison of the live schema
+against the models reported **no differences**. The originals were copied first and never touched.
+`tests/test_migrations.py` covers the same on SQLite in the test suite, including that an existing
+DNS-verified domain and its user are untouched.
 
 A database created before migrations existed is adopted at the **newest revision whose schema it
 matches**: each candidate revision is built in a scratch database and compared with the live one. That

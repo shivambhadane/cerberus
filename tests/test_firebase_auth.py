@@ -82,3 +82,28 @@ def test_invalid_firebase_token_falls_through_to_unauthorized(client):
     response = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer invalid-fb-token"})
     assert response.status_code == 401
     assert response.json()["error"]["code"] in ("token_invalid", "unauthorized")
+
+
+# --- the synthetic test token is an auth bypass unless explicitly enabled --------------------------
+
+def test_the_synthetic_token_is_refused_unless_tests_enabled_it(client, session, make_user, monkeypatch):
+    """Regression: `test-firebase-token:<email>:<uid>` once authenticated anyone as any email address,
+    and linked to an existing account by email, which was a full account takeover."""
+    victim = make_user("victim@example.com", name="Victim")
+    monkeypatch.delenv("CERBERUS_ALLOW_TEST_TOKENS", raising=False)
+
+    forged = {"Authorization": "Bearer test-firebase-token:victim@example.com:attacker-uid"}
+    response = client.get("/api/v1/auth/me", headers=forged)
+
+    assert response.status_code == 401
+    assert session.scalar(select(User).where(User.email == "victim@example.com")).id == victim.id
+    # and it did not create an account for an address nobody proved they own
+    fresh = {"Authorization": "Bearer test-firebase-token:nobody@example.com:x"}
+    assert client.get("/api/v1/auth/me", headers=fresh).status_code == 401
+    assert session.scalar(select(User).where(User.email == "nobody@example.com")) is None
+
+
+def test_the_synthetic_token_works_only_when_the_test_suite_enables_it(client, monkeypatch):
+    monkeypatch.setenv("CERBERUS_ALLOW_TEST_TOKENS", "1")
+    token = "test-firebase-token:t@example.com:t1"
+    assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200

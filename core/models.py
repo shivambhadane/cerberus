@@ -28,7 +28,10 @@ FINDING_STATUSES = ("open", "acknowledged", "resolved", "false_positive")
 CRITICALITY_LEVELS = ("low", "medium", "high", "critical")
 # How a person proves they control a domain, and where that proof stands. Only the values are
 # defined here; the checks that set them are a separate concern (see docs/DATABASE_SCHEMA.md).
-VERIFICATION_METHODS = ("dns_txt", "http_file")
+# `dns_txt` is the original method. The others prove control of a deployment on a managed platform
+# by way of the owner's connected provider account (see providers/ and docs/API.md).
+VERIFICATION_METHODS = ("dns_txt", "http_file", "vercel", "netlify", "cloudflare")
+PROVIDER_NAMES = ("vercel", "netlify", "cloudflare")
 VERIFICATION_STATUSES = ("pending", "verified", "failed")
 
 
@@ -75,6 +78,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # From the identity provider's verified token (Google, GitHub), never from the client: the
+    # profile picture URL and how the person signed in ("google.com", "github.com", "password").
+    picture_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     domains: Mapped[list[Domain]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -105,6 +112,14 @@ class Domain(Base):
     verification_method: Mapped[str] = mapped_column(String(16), default="dns_txt", server_default="dns_txt")
     verification_status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set only when verification_method is a platform (vercel/netlify/cloudflare): which connection
+    # proved it, the project it belongs to, and the account/team that project sits under.
+    provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    provider_connection_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("connected_providers.id"), nullable=True
+    )
+    provider_project_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_resource_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -134,6 +149,59 @@ class AuthSession(Base):
     # `revoked_at`: the login was ended (sign-out, or theft detected); final, no leeway.
     rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ConnectedProvider(Base):
+    """A user's connection to a deployment platform account (Vercel, Netlify, Cloudflare).
+
+    Cerberus uses it for one thing: asking the platform, with the user's own authorisation, which
+    projects that account controls. The tokens are credentials for the user's cloud account, so they
+    are stored encrypted (core/crypto.py) and are never returned by the API or sent to the browser.
+    """
+
+    __tablename__ = "connected_providers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "provider_account_id", name="uq_connection_identity"),
+        Index("ix_connected_providers_user", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(16))
+    # The account's id AT THE PROVIDER, read from the provider's API with the fresh token. It is never
+    # taken from the browser.
+    provider_account_id: Mapped[str] = mapped_column(String(128))
+    account_label: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    access_token_encrypted: Mapped[str] = mapped_column(Text)
+    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scopes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Non-secret provider details needed to call its API later (a Vercel team id, for example).
+    extra: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class OAuthState(Base):
+    """One in-flight OAuth authorisation: single-use, short-lived, bound to a user and a browser.
+
+    Only hashes are stored, so reading this table reveals nothing that can complete a flow.
+    """
+
+    __tablename__ = "oauth_states"
+    __table_args__ = (Index("ix_oauth_states_user", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(16))
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # Hash of a random value also set as a cookie in the browser that started the flow. A callback
+    # from any other browser (a link forwarded to a victim, say) does not carry it and is refused.
+    browser_hash: Mapped[str] = mapped_column(String(64))
+    code_verifier_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Scan(Base):

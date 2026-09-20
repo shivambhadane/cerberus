@@ -29,12 +29,12 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | Document | Purpose |
 |---|---|
 | [PRD](docs/PRD.md) | What's in/out of scope for v1, feature acceptance criteria |
-| [API Documentation](docs/API.md) | Every endpoint, request/response shape, auth |
+| [API Documentation](docs/API.md) | Every endpoint, request/response shape, auth, and how deployment-provider verification works and is secured |
 | [Database Schema](docs/DATABASE_SCHEMA.md) | Tables, relationships, and why they're designed that way |
 | [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md) | What Cerberus is allowed to scan, and how |
 | [Code map](docs/code.md) | Every directory and file: what it does and where to change things |
 | [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
-| [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, and what was and wasn't verified |
+| [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, setting up Vercel / Netlify / Cloudflare verification, and what was and wasn't verified |
 | [Demo script](docs/DEMO.md) | A 10-minute walkthrough, including where the tool is honest about its limits |
 | [Validation](docs/VALIDATION.md) | What a real end-to-end run against the lab produced, including the bugs it found |
 | [Test lab](lab/README.md) | The pinned, intentionally vulnerable Docker targets used for Level 1 validation |
@@ -271,9 +271,39 @@ record, so there is no "I am authorised" flag to send. See [docs/API.md](docs/AP
 cd frontend && npm install && npm run dev     # http://localhost:5173   (or: ./run.sh web)
 ```
 
-The dashboard asks you to create an account on first load. Add a domain, prove you own it with the DNS
-TXT record it gives you, and then you can scan it. The API must allow the dashboard's origin:
-`CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (already set in `.env.example`). See [frontend/README.md](frontend/README.md).
+The dashboard is served at `/platform/` (the landing page is at `/`) and asks you to sign in on first load:
+with Google, GitHub or email. Your name and photo come from your sign-in provider and appear on the
+**Profile** page. Add a target, prove you own it, and then you can scan it. The API must allow the dashboard's
+origin: `CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (already set in `.env.example`). See
+[frontend/README.md](frontend/README.md).
+
+### Proving you own a target
+
+A scan needs a **verified** target. There are two ways to verify one, and the first is always available:
+
+| You have | Verify it with | Notes |
+|---|---|---|
+| A custom domain (`example.com`) | **A DNS TXT record** the dashboard gives you | Works for any domain. Unchanged. |
+| An app on the platform's free address (`*.vercel.app`, `*.netlify.app`, `*.pages.dev`) | **Connecting your Vercel, Netlify or Cloudflare account** (Targets → *Add a deployment*) | You sign in on the platform, pick a project, and Cerberus asks the platform whether the account controls it. |
+
+You cannot add DNS records to `something.vercel.app`, which is what the second route is for. It is
+**optional and off until the operator sets it up**: it needs an OAuth app on each platform and an
+encryption key for the stored tokens (`./run.sh` generates that key; the platform steps are in
+[docs/DEPLOYMENT.md §7](docs/DEPLOYMENT.md#7-deployment-providers)). Until then each provider shows as "Not
+set up on this server" and nothing else changes.
+
+- **Tokens stay on the server**, encrypted at rest, and are never sent to your browser. OAuth uses the
+  authorization-code flow with a random, single-use `state` bound to your account and browser.
+- **Only the platform's own addresses can be verified this way.** A custom domain attached to a project proves
+  nothing about DNS control, so it still needs the TXT record.
+- **Scan authorization is unchanged.** A platform-verified target is additionally re-checked with the platform
+  just before each scan, and refused if that cannot be confirmed.
+- **Disconnect** (Targets, or the Profile page's list) deletes the stored tokens and returns the targets that
+  connection verified to "not verified".
+- **Honest limits:** it has been tested against fakes of each platform's documented responses, **not against a
+  live account**; Netlify's token endpoint is undocumented and its tokens have no scopes; Cloudflare's Pages
+  scope name is unpublished; a Vercel integration must be public before other people can use it. Details:
+  [docs/API.md §4](docs/API.md#4-deployment-providers).
 
 ### Viewing the landing page
 
@@ -333,6 +363,19 @@ integrations:
   jira:
     enabled: false
 ```
+
+Secrets and per-deployment settings live in `.env` (copy `.env.example`; `./run.sh` creates it and generates the
+keys). The ones added for deployment-provider verification are optional:
+
+| Variable | Purpose |
+|---|---|
+| `PROVIDER_TOKEN_ENCRYPTION_KEY` | Fernet key that encrypts stored provider tokens. Required for any provider. Back it up. |
+| `PUBLIC_API_URL`, `FRONTEND_URL` | Where the API and the dashboard are reached. The OAuth redirect URIs are built from `PUBLIC_API_URL`. |
+| `VERCEL_CLIENT_ID`, `VERCEL_CLIENT_SECRET`, `VERCEL_INTEGRATION_SLUG` | Your Vercel integration. |
+| `NETLIFY_CLIENT_ID`, `NETLIFY_CLIENT_SECRET` | Your Netlify OAuth application. |
+| `CLOUDFLARE_CLIENT_ID`, `CLOUDFLARE_CLIENT_SECRET`, `CLOUDFLARE_OAUTH_SCOPES` | Your Cloudflare OAuth client and its scopes. |
+
+`CERBERUS_ALLOW_TEST_TOKENS` exists for the test suite only. It lets anyone sign in as any email address; never set it.
 
 ## Usage
 
@@ -404,7 +447,8 @@ cerberus/
 ├── ingestion/            # Normalization, dedupe, asset criticality tagging
 ├── enrichment/           # CVE/KEV/EPSS pullers, cache, and technology->CVE matching
 ├── scoring/              # Exploitability scoring engine
-├── api/                  # REST API (FastAPI)
+├── api/                  # REST API (FastAPI): auth, domains, scans, findings, deployment providers
+├── providers/            # Vercel / Netlify / Cloudflare Pages: "which projects does this account control?"
 ├── migrations/           # Alembic schema migrations
 ├── lab/                  # Level 1 test lab: pinned intentionally-vulnerable Docker services
 ├── tests/                # Unit tests, plus integration/ for authorized public targets
@@ -424,7 +468,7 @@ Full phased breakdown with build order and exit criteria: [docs/ROADMAP.md](docs
 
 - [x] Foundation docs: README, PRD, API contract, database schema, rules of engagement, repo scaffold
 - [ ] MVP pipeline: discovery → ingestion → enrichment → scoring → CLI, end to end against a single target
-- [ ] Delivery & polish: dashboard, remaining API endpoints, deployment guide
+- [ ] Delivery & polish: dashboard, remaining API endpoints, deployment guide, accounts and domain ownership (DNS TXT, or a connected Vercel / Netlify / Cloudflare account for platform addresses)
 - [ ] Scale features: cloud connectors, criticality UI, Slack/Jira integration, multi-tenant support, graph-based blast-radius analysis, learned scoring model, public API
 
 ## Legal & Ethical Use

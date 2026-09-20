@@ -109,6 +109,32 @@ infrastructure we don't own the whole stack of." See [RULES_OF_ENGAGEMENT.md §4
         verified domain.
       - Data from before accounts has no owner and is invisible until `scripts/claim_legacy.py` assigns it.
       - **Not yet**: email verification, password reset, and "sign out everywhere".
+- [x] **Profile and dashboard shell.** The dashboard title/logo is no longer a link (it used to send people back
+      to the landing page); a separate "Landing page" button sits in the top bar. A **Profile** page shows the
+      name, photo, email, sign-in method and last sign-in, taken from the sign-in provider's *verified* token (a Google
+      photo, refreshed each sign-in) — migration `0006`, `core/profile.py`. The navigation is grouped, and the
+      account and sign-out live in the top bar. Audited with axe on 10 page states and checked at phone width.
+      - **Security fixes found on the way** (see [VALIDATION.md](VALIDATION.md)): the synthetic test sign-in tokens
+        were an authentication bypass and now work only with `CERBERUS_ALLOW_TEST_TOKENS=1`; and an unverified
+        Firebase email could link to (take over) an existing account with the same address, and now cannot.
+- [x] **Deployment provider ownership verification** — people without a custom domain can prove control of a
+      Vercel, Netlify or Cloudflare Pages app through their platform account, **in addition to** DNS TXT
+      verification, which is unchanged. See [API.md §4](API.md#4-deployment-providers) and
+      [DEPLOYMENT.md §7](DEPLOYMENT.md#7-deployment-providers).
+      - `providers/` abstraction (one module per platform), OAuth authorization-code flow with single-use,
+        user- and browser-bound `state` (PKCE for Cloudflare), exact redirect URIs, tokens Fernet-encrypted at rest
+        and never sent to the browser, `connected_providers` and `oauth_states` tables, four `provider_*` columns on
+        `domains` (migration `0007`), eight endpoints, and a Targets page ("Custom domain" or "Deployment").
+      - Only the platform's own free addresses (`*.vercel.app`, `*.netlify.app`, `*.pages.dev`) can be verified this
+        way: a custom domain listed on a project proves nothing about DNS control.
+      - Scan authorization is unchanged; a platform-verified target is additionally re-confirmed with the platform
+        just before each scan, and refused if it cannot be.
+      - Tested against fakes of each platform's documented responses, including cross-user isolation, forged and
+        replayed OAuth state, and disconnect. Migrations checked on SQLite, copies of the real databases and PostgreSQL 16.
+      - **Not yet:** a connection to a real Vercel, Netlify or Cloudflare account has never been made, so all three
+        clients are unproven against the live services. Netlify's token endpoint is undocumented and its tokens have
+        no scopes; Cloudflare's Pages scope name is unpublished; a Vercel integration must be public before others can
+        install it. More platforms (GitHub Pages, Render, Fly.io, Railway) would each be one module.
 - [ ] One-pager / slide deck
 
 ## Testing levels (see [RULES_OF_ENGAGEMENT.md](RULES_OF_ENGAGEMENT.md))
@@ -127,6 +153,8 @@ infrastructure we don't own the whole stack of." See [RULES_OF_ENGAGEMENT.md §4
 - [ ] Cloud connector support (AWS/Azure/GCP asset inventory)
 - [x] ~~Asset criticality tagging UI~~ — done in the dashboard redesign
 - [ ] Slack/Jira integration (`integrations/`)
+- [ ] Continuous re-verification of provider-verified targets (today they are re-checked at scan time only)
+- [ ] Revoking the token at the platform when a connection is disconnected (today it is only forgotten here)
 - [ ] Organisations/teams (several people sharing one set of domains) — deliberately out of scope for now
 - [ ] Multi-tenant support with row-level security
 - [ ] Graph-based blast-radius analysis

@@ -70,10 +70,12 @@ def test_data_survives_a_migration_that_rebuilds_tables(engine):
 
     command.upgrade(_alembic_config(engine), "0001")
     with engine.begin() as connection:
-        connection.execute(text(
-            "INSERT INTO cve_enrichment (cve_id, kev_listed, has_public_exploit, vendor, product, "
-            "last_refreshed_at) VALUES ('CVE-2021-41773', 1, 0, 'Apache', 'HTTP Server', '2026-09-18')"
-        ))
+        connection.execute(
+            text(
+                "INSERT INTO cve_enrichment (cve_id, kev_listed, has_public_exploit, vendor, product, "
+                "last_refreshed_at) VALUES ('CVE-2021-41773', 1, 0, 'Apache', 'HTTP Server', '2026-09-18')"
+            )
+        )
 
     migrate(engine)  # applies 0002
 
@@ -169,10 +171,12 @@ def test_a_legacy_database_from_an_older_schema_is_adopted_at_the_revision_it_ma
         connection.execute(
             text("INSERT INTO tenants (id, name, created_at) VALUES ('t1', 'kept', '2026-09-14')")
         )
-        connection.execute(text(
-            "INSERT INTO scans (id, tenant_id, target_domain, profile, status, started_at) "
-            "VALUES ('s1', 't1', 'example.com', 'safe', 'completed', '2026-09-14')"
-        ))
+        connection.execute(
+            text(
+                "INSERT INTO scans (id, tenant_id, target_domain, profile, status, started_at) "
+                "VALUES ('s1', 't1', 'example.com', 'safe', 'completed', '2026-09-14')"
+            )
+        )
 
     migrate(engine)
 
@@ -204,18 +208,22 @@ def test_existing_scans_and_assets_survive_the_ownership_migration_unowned(engin
 
     command.upgrade(_alembic_config(engine), "0003")
     with engine.begin() as connection:
-        connection.execute(text(
-            "INSERT INTO tenants (id, name, created_at) VALUES ('t1', 'default', '2026-09-18')"
-        ))
-        connection.execute(text(
-            "INSERT INTO scans (id, tenant_id, target_domain, profile, status, warnings, started_at) "
-            "VALUES ('s1', 't1', 'example.com', 'safe', 'completed', '[]', '2026-09-18')"
-        ))
-        connection.execute(text(
-            "INSERT INTO assets (id, tenant_id, discovered_by_scan_id, hostname, port, protocol, "
-            "first_seen_at, last_seen_at) VALUES ('a1', 't1', 's1', 'example.com', 443, 'tcp', "
-            "'2026-09-18', '2026-09-18')"
-        ))
+        connection.execute(
+            text("INSERT INTO tenants (id, name, created_at) VALUES ('t1', 'default', '2026-09-18')")
+        )
+        connection.execute(
+            text(
+                "INSERT INTO scans (id, tenant_id, target_domain, profile, status, warnings, started_at) "
+                "VALUES ('s1', 't1', 'example.com', 'safe', 'completed', '[]', '2026-09-18')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO assets (id, tenant_id, discovered_by_scan_id, hostname, port, protocol, "
+                "first_seen_at, last_seen_at) VALUES ('a1', 't1', 's1', 'example.com', 443, 'tcp', "
+                "'2026-09-18', '2026-09-18')"
+            )
+        )
 
     migrate(engine)
 
@@ -253,19 +261,23 @@ def test_an_asset_is_one_host_port_per_owner(engine):
 
     def asset(connection, id_, user, host="api.example.com"):
         owner = f"'{user}'" if user else "NULL"
-        connection.execute(text(
-            "INSERT INTO assets (id, tenant_id, user_id, hostname, port, protocol, "
-            "first_seen_at, last_seen_at) "
-            f"VALUES ('{id_}', 't1', {owner}, '{host}', 443, 'tcp', {now}, {now})"
-        ))
+        connection.execute(
+            text(
+                "INSERT INTO assets (id, tenant_id, user_id, hostname, port, protocol, "
+                "first_seen_at, last_seen_at) "
+                f"VALUES ('{id_}', 't1', {owner}, '{host}', 443, 'tcp', {now}, {now})"
+            )
+        )
 
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO tenants (id, name, created_at) VALUES ('t1', 'd', " + now + ")"))
         for uid in ("u1", "u2"):
-            connection.execute(text(
-                f"INSERT INTO users (id, email, password_hash, created_at, updated_at) "
-                f"VALUES ('{uid}', '{uid}@x.com', 'h', {now}, {now})"
-            ))
+            connection.execute(
+                text(
+                    f"INSERT INTO users (id, email, password_hash, created_at, updated_at) "
+                    f"VALUES ('{uid}', '{uid}@x.com', 'h', {now}, {now})"
+                )
+            )
         asset(connection, "a1", "u1")
         asset(connection, "a2", "u2")  # same host:port, different owner: allowed
         asset(connection, "a3", None)
@@ -274,3 +286,102 @@ def test_an_asset_is_one_host_port_per_owner(engine):
             asset(connection, f"dup-{owner}", owner)  # same owner (or both unowned): refused
     with engine.begin() as connection:
         asset(connection, "a4", None, host="other.example.com")  # unowned but a different host
+
+
+# --- 0006 / 0007: profile picture, connected providers, provider-verified targets -----------------
+
+
+def _seed_user_and_dns_domain(connection):
+    stamp = "'2026-09-20'"
+    connection.execute(
+        text(
+            "INSERT INTO users (id, email, password_hash, created_at, updated_at) "
+            f"VALUES ('u1', 'u1@x.com', 'h', {stamp}, {stamp})"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO domains (id, user_id, domain, verification_token, verification_method, "
+            "verification_status, verified_at, created_at, updated_at) "
+            f"VALUES ('d1', 'u1', 'example.com', 'tok', 'dns_txt', 'verified', {stamp}, {stamp}, {stamp})"
+        )
+    )
+
+
+def test_existing_users_and_dns_verified_domains_are_untouched_by_the_provider_migrations(engine):
+    """0006 and 0007 are additive: a DNS-verified domain stays exactly as it was, with no provider."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(engine), "0005")
+    with engine.begin() as connection:
+        _seed_user_and_dns_domain(connection)
+
+    migrate(engine)
+
+    with engine.connect() as connection:
+        user = connection.execute(text("SELECT email, picture_url, auth_provider FROM users")).one()
+        domain = connection.execute(
+            text(
+                "SELECT domain, verification_method, verification_status, provider, "
+                "provider_connection_id, provider_project_id, provider_resource_id FROM domains"
+            )
+        ).one()
+    assert user == ("u1@x.com", None, None)
+    assert domain == ("example.com", "dns_txt", "verified", None, None, None, None)
+    assert schema_differences(engine) == []
+
+
+def test_the_provider_tables_have_the_constraints_that_make_them_safe(engine):
+    from sqlalchemy.exc import IntegrityError
+
+    migrate(engine)
+    stamp = "'2026-09-20'"
+
+    def connection_row(connection, id_, account):
+        connection.execute(
+            text(
+                "INSERT INTO connected_providers (id, user_id, provider, provider_account_id, "
+                "access_token_encrypted, created_at, updated_at) "
+                f"VALUES ('{id_}', 'u1', 'vercel', '{account}', 'sealed', {stamp}, {stamp})"
+            )
+        )
+
+    with engine.begin() as connection:
+        _seed_user_and_dns_domain(connection)
+        connection_row(connection, "c1", "acct-1")
+        connection_row(connection, "c2", "acct-2")  # a second account of the same provider: allowed
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection_row(connection, "c3", "acct-1")  # the same account twice: refused
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO oauth_states (id, user_id, provider, state_hash, browser_hash, created_at, "
+                f"expires_at) VALUES ('s1', 'u1', 'vercel', 'h', 'b', {stamp}, {stamp})"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO oauth_states (id, user_id, provider, state_hash, browser_hash, created_at, "
+                f"expires_at) VALUES ('s2', 'u1', 'vercel', 'h', 'b', {stamp}, {stamp})"  # same state hash
+            )
+        )
+
+
+def test_the_provider_migrations_can_be_undone_and_redone(engine):
+    from alembic import command
+
+    migrate(engine)
+    command.downgrade(_alembic_config(engine), "0005")
+
+    inspector = inspect(engine)
+    assert not {"connected_providers", "oauth_states"} & set(inspector.get_table_names())
+    domain_columns = {c["name"] for c in inspector.get_columns("domains")}
+    assert (
+        not {"provider", "provider_connection_id", "provider_project_id", "provider_resource_id"}
+        & domain_columns
+    )
+    assert not {"picture_url", "auth_provider"} & {c["name"] for c in inspector.get_columns("users")}
+
+    migrate(engine)  # and forward again
+    assert schema_differences(engine) == []
+    assert "connected_providers" in inspect(engine).get_table_names()

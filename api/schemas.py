@@ -35,6 +35,9 @@ class UserOut(BaseModel):
     name: str
     email_verified: bool
     created_at: UtcDatetime
+    last_login_at: UtcDatetime | None = None
+    picture_url: str | None = None
+    auth_provider: str | None = None
 
 
 class AuthResponse(BaseModel):
@@ -67,7 +70,11 @@ class DomainOut(BaseModel):
     verification_method: str
     verified_at: UtcDatetime | None = None
     created_at: UtcDatetime
-    verification: VerificationInstructions
+    # DNS instructions: only for DNS-verified targets (None when a platform account proved it).
+    verification: VerificationInstructions | None = None
+    # Set when a connected platform account (vercel/netlify/cloudflare) proved it.
+    provider: str | None = None
+    provider_project_id: str | None = None
 
 
 class DomainList(BaseModel):
@@ -247,3 +254,59 @@ class Overview(BaseModel):
     assets: AssetsOverview
     scans_total: int
     last_scan: ScanSummary | None = None
+
+
+# --- deployment providers --------------------------------------------------------------------------
+
+class ConnectionOut(BaseModel):
+    """A connection to a platform account. Deliberately carries no token, secret or scope detail a
+    client could misuse: it says what is connected and when."""
+
+    id: str
+    provider: str
+    label: str
+    connected_at: UtcDatetime
+    scopes: list[str] = []
+
+
+class ProviderInfo(BaseModel):
+    provider: str
+    label: str
+    configured: bool  # false until the operator has registered an OAuth app and set its credentials
+    connections: list[ConnectionOut] = []
+
+
+class ProviderList(BaseModel):
+    providers: list[ProviderInfo]
+
+
+class ConnectStarted(BaseModel):
+    authorization_url: str
+
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    hostnames: list[str]  # platform hostnames that can be verified (`*.vercel.app` and the like)
+    verified_hostnames: list[str] = []  # the ones already added and verified for this user
+
+
+class ProjectList(BaseModel):
+    connection: ConnectionOut
+    projects: list[ProjectOut]
+
+
+class ProviderTargetRequest(BaseModel):
+    connection_id: str = Field(min_length=1, max_length=36)
+    project_id: str = Field(min_length=1, max_length=256)
+    hostname: str = Field(min_length=1, max_length=300)
+
+
+class ProviderVerifyRequest(BaseModel):
+    connection_id: str = Field(min_length=1, max_length=36)
+    project_id: str = Field(min_length=1, max_length=256)
+
+
+class Disconnected(BaseModel):
+    disconnected: bool = True
+    targets_reset: int

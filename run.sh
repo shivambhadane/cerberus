@@ -120,6 +120,23 @@ ensure_env() {
     say "Generated a new API_SECRET_KEY in .env ${DIM}(this signs out anyone signed in before)${OFF}"
   fi
 
+  # PROVIDER_TOKEN_ENCRYPTION_KEY encrypts the Vercel/Netlify/Cloudflare tokens at rest. Only ever filled
+  # in when empty: replacing a key that exists would make every stored token unreadable.
+  local enc
+  enc="$(grep -E '^PROVIDER_TOKEN_ENCRYPTION_KEY=' .env | head -1 | cut -d= -f2- || true)"
+  if [ -z "$enc" ]; then
+    local key
+    key="$("$PY" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' 2>/dev/null || true)"
+    if [ -n "$key" ]; then
+      local tmp; tmp="$(mktemp)"; chmod 600 "$tmp"
+      grep -vE '^PROVIDER_TOKEN_ENCRYPTION_KEY=' .env > "$tmp"
+      printf 'PROVIDER_TOKEN_ENCRYPTION_KEY=%s\n' "$key" >> "$tmp"
+      mv "$tmp" .env
+      chmod 600 .env
+      say "Generated a PROVIDER_TOKEN_ENCRYPTION_KEY in .env ${DIM}(back it up: without it, stored provider tokens cannot be read)${OFF}"
+    fi
+  fi
+
   if ! grep -qE '^CORS_ORIGINS=' .env; then
     printf 'CORS_ORIGINS=http://localhost:%s,http://127.0.0.1:%s\n' "$WEB_PORT" "$WEB_PORT" >> .env
   fi

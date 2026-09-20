@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { enrichmentStatus, logout, onSessionEnded, restoreSession } from "./api";
 import { AssetsView } from "./components/AssetsView";
 import { AuthGate } from "./components/AuthGate";
+import { Avatar, displayName } from "./components/Avatar";
 import { DomainsView } from "./components/DomainsView";
 import { EnrichmentBanner } from "./components/EnrichmentBanner";
 import { FindingsView } from "./components/FindingsView";
@@ -9,42 +10,52 @@ import { Icon } from "./components/icons";
 import type { IconName } from "./components/icons";
 import { ObservationsView } from "./components/ObservationsView";
 import { OverviewView } from "./components/OverviewView";
+import { ProfileView } from "./components/ProfileView";
 import { ScansView } from "./components/ScansView";
-import { TABS, toHash, useRoute } from "./lib/router";
+import { toHash, useRoute } from "./lib/router";
 import type { Tab } from "./lib/router";
 import type { SourceStatus, User } from "./types";
 
 const NAV: Record<Tab, { label: string; icon: IconName }> = {
   overview: { label: "Overview", icon: "overview" },
-  domains: { label: "Domains", icon: "domains" },
+  domains: { label: "Targets", icon: "domains" },
   scans: { label: "Scans", icon: "scans" },
   findings: { label: "Findings", icon: "findings" },
   assets: { label: "Assets", icon: "assets" },
   evidence: { label: "Evidence", icon: "evidence" },
+  profile: { label: "Profile", icon: "user" },
 };
+
+/** The sidebar: what you scan, then what the scans found. Profile lives in the account area instead. */
+const NAV_GROUPS: { label: string; tabs: Tab[] }[] = [
+  { label: "Workspace", tabs: ["overview", "domains", "scans"] },
+  { label: "Results", tabs: ["findings", "assets", "evidence"] },
+];
 
 type Auth =
   | { status: "loading" }
   | { status: "out"; notice?: string }
   | { status: "in"; user: User };
 
+/**
+ * The product name and crest. Deliberately not a link: inside the dashboard it is a label, and the way
+ * back to the public site is the explicit "Landing page" button in the top bar.
+ */
 function Brand({ heading }: { heading?: boolean }) {
   return (
-    <a href="/" className="brand-link" title="Cerberus Home">
-      <div className="brand">
-        <span className="brand-mark-crest" aria-hidden="true">
-          <svg width="26" height="24" viewBox="0 0 40 42" fill="none">
-            <path d="M0 25C0 19.5 2.9 14.7 7.2 12C9.6 10.4 12.6 9.4 15.8 9.4V40.6C12.6 40.6 9.6 39.6 7.2 38C2.9 35.3 0 30.5 0 25Z" fill="#F97316"/>
-            <path d="M18.8 12C15.8 14.7 13.8 19.5 13.8 25C13.8 30.5 15.8 35.3 18.8 38C21.2 39.6 23.8 40.6 26.5 40.6V9.4C23.8 9.4 21.2 10.4 18.8 12Z" fill="#F97316"/>
-            <path d="M30 12C27.2 14.7 25.5 19.5 25.5 25C25.5 30.5 27.2 35.3 30 38C32.2 39.6 34.6 40.6 37.2 40.6V9.4C34.6 9.4 32.2 10.4 30 12Z" fill="#F97316"/>
-          </svg>
-        </span>
-        <span className="brand-title">
-          {heading ? <h1>Cerberus</h1> : "Cerberus"}
-        </span>
-        <span className="brand-tag">SecOps</span>
-      </div>
-    </a>
+    <div className="brand">
+      <span className="brand-mark-crest" aria-hidden="true">
+        <svg width="26" height="24" viewBox="0 0 40 42" fill="none">
+          <path d="M0 25C0 19.5 2.9 14.7 7.2 12C9.6 10.4 12.6 9.4 15.8 9.4V40.6C12.6 40.6 9.6 39.6 7.2 38C2.9 35.3 0 30.5 0 25Z" fill="#F97316"/>
+          <path d="M18.8 12C15.8 14.7 13.8 19.5 13.8 25C13.8 30.5 15.8 35.3 18.8 38C21.2 39.6 23.8 40.6 26.5 40.6V9.4C23.8 9.4 21.2 10.4 18.8 12Z" fill="#F97316"/>
+          <path d="M30 12C27.2 14.7 25.5 19.5 25.5 25C25.5 30.5 27.2 35.3 30 38C32.2 39.6 34.6 40.6 37.2 40.6V9.4C34.6 9.4 32.2 10.4 30 12Z" fill="#F97316"/>
+        </svg>
+      </span>
+      <span className="brand-title">
+        {heading ? <h1>Cerberus</h1> : "Cerberus"}
+      </span>
+      <span className="brand-tag">SecOps</span>
+    </div>
   );
 }
 
@@ -129,79 +140,70 @@ export default function App() {
     <>
       {skipLink}
       <div className="shell">
-        <header className="sidebar">
+        <aside className="sidebar" aria-label="Cerberus">
           <Brand />
-          <nav aria-label="Primary">
-            <ul className="nav" role="list">
-              {TABS.map((id) => (
-                <li key={id}>
-                  <a className="nav-link" href={toHash(id, {})} aria-current={tab === id ? "page" : undefined}>
-                    <Icon name={NAV[id].icon} />
-                    {NAV[id].label}
-                  </a>
-                </li>
-              ))}
-            </ul>
+          <nav aria-label="Primary" className="sidebar-nav">
+            {NAV_GROUPS.map((group) => (
+              <div key={group.label} className="nav-group">
+                <p className="nav-heading">{group.label}</p>
+                <ul className="nav" role="list">
+                  {group.tabs.map((id) => (
+                    <li key={id}>
+                      <a className="nav-link" href={toHash(id, {})} aria-current={tab === id ? "page" : undefined}>
+                        <Icon name={NAV[id].icon} />
+                        {NAV[id].label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </nav>
-          <div className="sidebar-footer">
-            <a
-              href="/"
-              className="sidebar-landing-link"
-              title="Open Cerberus Landing Page"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                <path d="M2 12h20" />
-              </svg>
-              <span>Landing Page</span>
-              <span className="landing-arrow" aria-hidden="true">↗</span>
-            </a>
+          <p className="sidebar-note">Cerberus only scans targets you have verified as yours.</p>
+        </aside>
 
-            <div className="user-profile-card">
-              <div className="user-avatar-wrap">
-                <div className="user-avatar" aria-hidden="true">
-                  {(
-                    auth.user.name?.trim()
-                      ? auth.user.name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()
-                      : auth.user.email.slice(0, 2).toUpperCase()
-                  ) || "CB"}
-                </div>
-                <span className="user-status-dot" title="Active session" aria-hidden="true" />
-              </div>
-
-              <div className="who" title={auth.user.email}>
-                <span className="who-name">
-                  {auth.user.name?.trim() || auth.user.email.split("@")[0]}
-                </span>
-                <span className="who-email">{auth.user.email}</span>
-                <span className="who-label sr-only">Signed in as</span>
-              </div>
-
-              <button
-                type="button"
-                className="user-signout-btn"
-                onClick={() => void signOut()}
-                title="Sign out of Cerberus"
-                aria-label="Sign out"
+        <div className="workspace">
+          <header className="topbar">
+            <p className="topbar-where" aria-hidden="true">
+              Dashboard <span>/</span> <strong>{NAV[tab].label}</strong>
+            </p>
+            <div className="topbar-actions">
+              <a className="btn btn-sm" href="/" title="Go to the Cerberus landing page">
+                <Icon name="external" />
+                Landing page
+              </a>
+              <a
+                className="account-link"
+                href={toHash("profile", {})}
+                aria-current={tab === "profile" ? "page" : undefined}
+                title="Your profile"
               >
+                <Avatar user={auth.user} size="sm" />
+                <span className="account-name">
+                  <span className="sr-only">Profile: </span>
+                  {displayName(auth.user)}
+                </span>
+              </a>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void signOut()}>
                 <Icon name="signout" />
+                <span className="signout-text">Sign out</span>
               </button>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <main id="main" tabIndex={-1} className="content">
-          <div className="stack">
-            {sources && <EnrichmentBanner sources={sources} quietWhenFresh={tab !== "overview"} />}
-            {tab === "overview" && <OverviewView />}
-            {tab === "domains" && <DomainsView />}
-            {tab === "scans" && <ScansView onScanFinished={refreshStatus} />}
-            {tab === "findings" && <FindingsView />}
-            {tab === "assets" && <AssetsView />}
-            {tab === "evidence" && <ObservationsView />}
-          </div>
-        </main>
+          <main id="main" tabIndex={-1} className="content">
+            <div className="stack">
+              {sources && <EnrichmentBanner sources={sources} quietWhenFresh={tab !== "overview"} />}
+              {tab === "overview" && <OverviewView />}
+              {tab === "domains" && <DomainsView />}
+              {tab === "scans" && <ScansView onScanFinished={refreshStatus} />}
+              {tab === "findings" && <FindingsView />}
+              {tab === "assets" && <AssetsView />}
+              {tab === "evidence" && <ObservationsView />}
+              {tab === "profile" && <ProfileView user={auth.user} onSignOut={() => void signOut()} />}
+            </div>
+          </main>
+        </div>
       </div>
     </>
   );

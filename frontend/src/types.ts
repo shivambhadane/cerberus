@@ -109,6 +109,11 @@ export interface User {
   name: string;
   email_verified: boolean;
   created_at: string;
+  last_login_at?: string | null;
+  /** From the identity provider's verified token (a Google photo). Untrusted until shown with a fallback. */
+  picture_url?: string | null;
+  /** How the person signed in: "google.com", "github.com" or "password". */
+  auth_provider?: string | null;
 }
 
 export interface AuthResult {
@@ -127,7 +132,41 @@ export interface Domain {
   verification_method: string;
   verified_at: string | null;
   created_at: string;
-  verification: { method: string; record_type: string; record_name: string; record_value: string };
+  /** DNS instructions; null when a platform account (Vercel, Netlify, Cloudflare) proved the target. */
+  verification: { method: string; record_type: string; record_name: string; record_value: string } | null;
+  provider?: string | null;
+  provider_project_id?: string | null;
+}
+
+export type ProviderName = "vercel" | "netlify" | "cloudflare";
+
+export interface Connection {
+  id: string;
+  provider: ProviderName;
+  label: string;
+  connected_at: string;
+  scopes: string[];
+}
+
+export interface ProviderInfo {
+  provider: ProviderName;
+  label: string;
+  /** False until the operator has registered an OAuth app and set its credentials on the server. */
+  configured: boolean;
+  connections: Connection[];
+}
+
+export interface PlatformProject {
+  id: string;
+  name: string;
+  /** Platform hostnames (`*.vercel.app` and the like) that can be verified. */
+  hostnames: string[];
+  verified_hostnames: string[];
+}
+
+export interface ProjectList {
+  connection: Connection;
+  projects: PlatformProject[];
 }
 
 export interface VerifyResult {

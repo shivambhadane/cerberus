@@ -1,11 +1,11 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
- * A small hash router. The dashboard has six screens and needs exactly two things from a
+ * A small hash router. The dashboard has seven screens and needs exactly two things from a
  * router: the back button, and links that survive a reload (filters, the selected finding).
  * `#/findings?status=active&finding=abc` carries both, so no dependency is warranted.
  */
-export const TABS = ["overview", "domains", "scans", "findings", "assets", "evidence"] as const;
+export const TABS = ["overview", "domains", "scans", "findings", "assets", "evidence", "profile"] as const;
 export type Tab = (typeof TABS)[number];
 
 interface Route {

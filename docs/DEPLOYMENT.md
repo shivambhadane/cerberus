@@ -43,6 +43,8 @@ EOF
 | `ACCESS_TOKEN_MINUTES`, `REFRESH_TOKEN_DAYS` | no | Session lifetimes (default 15 minutes / 14 days). |
 | `NVD_API_KEY` | no | Free from NVD. Without it enrichment is limited to 5 requests per 30s and scans are markedly slower. |
 | `CORS_ORIGINS` | if you use the dashboard | Comma-separated origins allowed to call the API from a browser. It also allowlists which origins may use the session cookie, so list the dashboard's real origin and nothing else. |
+| `FIREBASE_PROJECT_ID` | no | The Firebase project whose ID tokens (Google, GitHub, email sign-in) the API accepts. Defaults to the project this repository was built against; set it to your own if you use your own Firebase project. |
+| `PROVIDER_TOKEN_ENCRYPTION_KEY`, `PUBLIC_API_URL`, `FRONTEND_URL`, `<PROVIDER>_CLIENT_ID` / `_SECRET`, … | only for [deployment providers](#7-deployment-providers) | Let people verify a Vercel, Netlify or Cloudflare Pages app through their platform account. Optional: without them DNS verification works exactly as before. |
 
 There are deliberately no defaults for the two secrets. A default that ships in the repository is a
 credential every reader of the repository already knows.
@@ -71,9 +73,14 @@ run this daily (cron or a systemd timer).
 
 ```bash
 curl -s http://127.0.0.1:8000/healthz                       # {"status":"ok"}
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/api/v1/findings   # 401
-curl -s -H "Authorization: Bearer $API_SECRET_KEY" http://127.0.0.1:8000/api/v1/findings
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/api/v1/findings   # 401 without a sign-in
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer change-me" http://127.0.0.1:8000/api/v1/findings   # 401
 ```
+
+`API_SECRET_KEY` signs sign-in tokens; it is not itself a bearer token. Sign in through the dashboard,
+or `POST /api/v1/auth/register`, and send the `access_token` it returns as the bearer token (see
+[API.md §1](API.md#1-authentication)). Also confirm the test-only sign-in bypass is off: the API logs an
+error at startup if `CERBERUS_ALLOW_TEST_TOKENS=1` is set, and it must never be.
 
 Confirm the tools are present in the running container, since their absence degrades scans
 silently to version inference only:
@@ -134,8 +141,110 @@ docker compose build --no-cache api && docker compose up -d api
 docker compose exec -T postgres pg_dump -U cerberus cerberus > cerberus-$(date +%F).sql
 ```
 
+Back up `PROVIDER_TOKEN_ENCRYPTION_KEY` **separately** from that dump, if you use deployment providers.
+The dump holds only ciphertext, so it is safe to store without the key, and useless for reading
+tokens without it; a restore needs the same key (or people reconnect their accounts).
+
 **Upgrades.** Pull, rebuild, restart; pending migrations run on startup. A database created before
 migrations existed is adopted only if its schema matches, and refused with an error otherwise.
+
+## 7. Deployment providers
+
+Optional. People without a custom domain can prove control of an app on **Vercel**, **Netlify** or
+**Cloudflare Pages** by connecting the account it is deployed on (Targets → *Add a deployment*). DNS TXT
+verification is unchanged and stays the only way to verify a custom domain. What the feature does, its
+security model and its limits are in [API.md §4](API.md#4-deployment-providers); this section is what
+the operator has to set up. A provider you have not set up shows as "Not set up on this server".
+
+**Nothing here has been run against a live platform.** The steps below come from each platform's
+documentation. Treat the first real connection as the test, and see [API.md §4.6](API.md#46-limitations).
+
+### 7.1 Server settings
+
+| Variable | Notes |
+|---|---|
+| `PROVIDER_TOKEN_ENCRYPTION_KEY` | **Required** for any provider. A Fernet key that encrypts the stored tokens: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. `./run.sh` generates one for local use. Keep it out of the repository and **back it up**: if it is lost the stored tokens cannot be read and people reconnect. To rotate, put the new key first and keep the old one after a comma. |
+| `PUBLIC_API_URL` | The API's public base URL, for example `https://api.example.com`. The OAuth redirect URIs are built from it. Use `https://` in production; it defaults to `http://localhost:8000`. |
+| `FRONTEND_URL` | Where the dashboard is served, for example `https://app.example.com`. After a connection the browser is sent to `{FRONTEND_URL}/platform/#/domains`. Defaults to `http://localhost:5173`. |
+| `COOKIE_SECURE=1` | Required in production. The OAuth cookie is marked `Secure` under it, like the refresh cookie. |
+| `VERCEL_CLIENT_ID`, `VERCEL_CLIENT_SECRET`, `VERCEL_INTEGRATION_SLUG` | From the Vercel integration (§7.3). |
+| `NETLIFY_CLIENT_ID`, `NETLIFY_CLIENT_SECRET` | From the Netlify OAuth application (§7.4). |
+| `CLOUDFLARE_CLIENT_ID`, `CLOUDFLARE_CLIENT_SECRET`, `CLOUDFLARE_OAUTH_SCOPES` | From the Cloudflare OAuth client (§7.5). The scopes are space-separated. |
+
+Client secrets and the encryption key are read only by the API process. They are never sent to the
+browser, logged, or returned by any endpoint. The compose file passes `.env` to the API container, so
+nothing else needs changing. Restart the API after editing `.env`.
+
+Keep the dashboard and the API on the **same site** (`app.example.com` and `api.example.com`, or one
+origin behind a reverse proxy), and use one host name for both: the OAuth cookie is `SameSite=Lax`, so
+under `localhost` for one and `127.0.0.1` for the other the callback will be refused as `invalid_state`.
+
+### 7.2 Redirect (callback) URLs
+
+Register exactly this with each platform, character for character (no trailing slash, no wildcard):
+
+| Provider | Redirect URI |
+|---|---|
+| Vercel | `{PUBLIC_API_URL}/api/v1/providers/vercel/callback` |
+| Netlify | `{PUBLIC_API_URL}/api/v1/providers/netlify/callback` |
+| Cloudflare | `{PUBLIC_API_URL}/api/v1/providers/cloudflare/callback` |
+
+For local development that is `http://localhost:8000/api/v1/providers/<provider>/callback`. Platforms
+usually insist on HTTPS for anything that is not localhost, and whether each accepts a plain-HTTP
+localhost address was not checked. If one refuses, use a tunnel with an HTTPS address and set
+`PUBLIC_API_URL` to it.
+
+### 7.3 Vercel
+
+Vercel is connected through an **Integration**, not "Sign in with Vercel": Sign in with Vercel only
+carries identity, and its permissions for API requests are documented as being in private beta.
+
+1. In the Vercel dashboard create a new **Integration** (Settings → Integrations → Create, or the
+   integration console). Menu names change; the fields you need are below.
+2. **Name and slug.** The slug is the last part of the install URL,
+   `https://vercel.com/integrations/<slug>`. Put it in `VERCEL_INTEGRATION_SLUG`.
+3. **Redirect URL:** the Vercel URI from §7.2.
+4. **Permissions (scopes): read-only** for the user, the team and projects, which is what listing a
+   project and its domains needs. Grant nothing that writes. Scopes are set here, not requested in the
+   URL, so a scope that is missing shows up as `provider_error` on the first project listing.
+5. Copy the **Client ID** and **Client Secret** into `VERCEL_CLIENT_ID` and `VERCEL_CLIENT_SECRET`.
+6. **Visibility.** A private integration can be installed only by its creator's own team, which is enough
+   for you. For *other* people to connect, it must be made public, which Vercel reviews.
+7. In Cerberus: Targets → Add a deployment → **Connect Vercel**, choose the team and the projects to
+   share on Vercel's page, then pick a project.
+
+### 7.4 Netlify
+
+1. Netlify → User settings → **Applications** → OAuth → **New OAuth application**.
+2. **Redirect URI:** the Netlify URI from §7.2.
+3. Copy the **Client ID** and **Secret** into `NETLIFY_CLIENT_ID` and `NETLIFY_CLIENT_SECRET`.
+4. There are no scopes to choose. **Netlify OAuth has no scopes, so a token can do anything the person
+   can.** Cerberus only reads the site list and forgets the token on disconnect, and the dashboard says
+   so, but the person should also revoke the app in their Netlify settings when done.
+5. Netlify's public reference documents the implicit grant; the authorization-code token endpoint
+   Cerberus uses is not in it. If the first connection fails with `authorization_failed`, this is the
+   likely reason.
+
+### 7.5 Cloudflare Pages
+
+Cloudflare's OAuth is self-managed: authorization code with PKCE, refresh tokens through `offline_access`.
+
+1. In the Cloudflare dashboard create an **OAuth client** for your account (see Cloudflare's *Create an
+   OAuth client* documentation): a confidential (web) client, with the redirect URI from §7.2.
+2. **Scopes.** Choose the read-only scopes that let the client list accounts and read Pages projects.
+   Cloudflare does not publish the Pages scope's identifier in its public docs; the current list comes
+   from its authenticated endpoint `GET /client/v4/oauth/scopes`. Put the exact identifiers, space-separated,
+   in `CLOUDFLARE_OAUTH_SCOPES`. Cerberus adds `openid` (to learn the account's id) and `offline_access`
+   (for a refresh token) itself. Until the variable is set the provider shows as not set up.
+3. Copy the client id and secret into `CLOUDFLARE_CLIENT_ID` and `CLOUDFLARE_CLIENT_SECRET`.
+
+### 7.6 Checking it
+
+`GET /api/v1/providers` (signed in) reports `"configured": true` for each provider that has its
+credentials and the encryption key. The dashboard shows the same. To disconnect an account, use
+Targets → the provider's card → **Disconnect**; its stored tokens are deleted and the targets it
+verified return to "not verified". The OAuth app also stays authorised in the platform's own settings
+until the person removes it there.
 
 ## Verified
 
@@ -155,6 +264,9 @@ That last check found a bug that SQLite had hidden: a real CISA KEV product fiel
 and the column was `VARCHAR(128)`, so the enrichment refresh crashed on Postgres while every local
 test passed. See [VALIDATION.md](VALIDATION.md).
 
+Also run on Postgres 16.15: migrations `0005 → 0007 → 0005 → 0007` with a user and a DNS-verified
+domain seeded (rows preserved; schema identical to the models after the last step).
+
 ## Not verified
 
 - A TLS reverse proxy in front of the API (the Caddy snippet above is an example, not tested here).
@@ -162,3 +274,5 @@ test passed. See [VALIDATION.md](VALIDATION.md).
 - Kubernetes, or any orchestrator other than Docker Compose.
 - Serving the built dashboard from a static host.
 - arm64 images (the checksum is pinned but the build was only run on amd64).
+- Connecting a real Vercel, Netlify or Cloudflare account (§7). The provider code is exercised against
+  fakes of each platform's documented responses only.

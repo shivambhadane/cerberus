@@ -113,6 +113,7 @@ def _user_out(user: User) -> UserOut:
     return UserOut(
         id=user.id, email=user.email, name=user.name,
         email_verified=user.email_verified, created_at=user.created_at,
+        last_login_at=user.last_login_at, picture_url=user.picture_url, auth_provider=user.auth_provider,
     )
 
 

@@ -12,6 +12,7 @@ from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from api import auth, domains
+from api import providers as provider_routes
 from api.deps import ApiError, current_user, get_session
 from api.schemas import (
     CRITICALITY_LEVELS,
@@ -37,6 +38,7 @@ from api.schemas import (
     SourceStatus,
 )
 from core.config import load_config
+from core.crypto import CryptoError, get_cipher
 from core.db import get_default_tenant, init_db, session_scope
 from core.models import (
     FINDING_STATUSES,
@@ -60,6 +62,7 @@ from core.pipeline import (
     run_pipeline,
 )
 from core.profiles import ProfileViolation, get_profile
+from core.provider_service import ProviderServiceError, recheck_platform_target
 from scoring.engine import RISK_BANDS, score_pending_findings
 
 log = logging.getLogger(__name__)
@@ -94,6 +97,11 @@ def check_api_secret() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     check_api_secret()
+    if os.environ.get("CERBERUS_ALLOW_TEST_TOKENS") == "1" and os.environ.get("PYTEST_CURRENT_TEST") is None:
+        log.error(
+            "CERBERUS_ALLOW_TEST_TOKENS=1 is set: anyone can sign in as any email address. "
+            "It exists only for the test suite. Unset it."
+        )
     init_db()
     with session_scope() as session:
         fail_interrupted_scans(session)
@@ -131,11 +139,19 @@ async def _api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
 
 app.include_router(auth.router)
 app.include_router(domains.router)
+app.include_router(provider_routes.router)
 
 
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+def _optional_cipher():
+    try:
+        return get_cipher()
+    except CryptoError:
+        return None
 
 
 @app.post("/api/v1/scans", response_model=ScanCreated, status_code=202)
@@ -171,6 +187,14 @@ def create_scan(
             "user_inactive": (403, "account_disabled"),
         }.get(exc.code, (403, exc.code))
         raise ApiError(status, code, str(exc)) from None
+
+    # A target proved through Vercel/Netlify/Cloudflare is re-confirmed with the platform right now:
+    # platform names are released when a project is deleted, and a verification must not outlive the
+    # ownership it recorded. DNS-verified targets pass straight through.
+    try:
+        recheck_platform_target(session, domain, _optional_cipher())
+    except ProviderServiceError as exc:
+        raise provider_routes.to_api_error(exc) from None
 
     active = session.scalar(
         select(Scan).where(Scan.user_id == user.id, Scan.status.in_(ACTIVE_SCAN_STATUSES))

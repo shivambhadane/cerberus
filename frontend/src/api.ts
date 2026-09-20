@@ -7,6 +7,7 @@ import {
 import type {
   Asset,
   AuthResult,
+  Connection,
   Criticality,
   Domain,
   Finding,
@@ -15,6 +16,8 @@ import type {
   Observation,
   Overview,
   Page,
+  ProjectList,
+  ProviderInfo,
   Scan,
   SourceStatus,
   User,
@@ -242,6 +245,42 @@ export const addDomain = (domain: string) =>
 
 export const verifyDomain = (id: string) =>
   request<VerifyResult>(`/api/v1/domains/${id}/verify`, { method: "POST" });
+
+/* ---- Deployment providers (Vercel, Netlify, Cloudflare Pages) -----------------------------
+ * The browser never sees a provider token or client secret. `connectProvider` returns only the
+ * provider's own authorisation URL; the provider then redirects to the API, which completes the
+ * connection server-side and sends the browser back to the Targets page with a short outcome code.
+ */
+
+export const listProviders = async (signal?: AbortSignal): Promise<ProviderInfo[]> =>
+  (await request<{ providers: ProviderInfo[] }>("/api/v1/providers", { signal })).providers;
+
+export const connectProvider = (provider: string) =>
+  request<{ authorization_url: string }>(`/api/v1/providers/${provider}/connect`, { method: "POST" });
+
+export const listConnectionProjects = (connectionId: string, signal?: AbortSignal) =>
+  request<ProjectList>(`/api/v1/connections/${connectionId}/projects`, { signal });
+
+export const disconnectConnection = (connectionId: string) =>
+  request<{ disconnected: boolean; targets_reset: number }>(`/api/v1/connections/${connectionId}/disconnect`, {
+    method: "POST",
+  });
+
+export const listConnections = (signal?: AbortSignal) => request<Connection[]>("/api/v1/connections", { signal });
+
+/** Add a deployment as a verified target. The server decides ownership; these three are only a request. */
+export const addPlatformTarget = (connectionId: string, projectId: string, hostname: string) =>
+  request<Domain>("/api/v1/domains/provider", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId, project_id: projectId, hostname }),
+  });
+
+/** Verify an existing target again through a connected account (e.g. after reconnecting it). */
+export const verifyPlatformTarget = (domainId: string, connectionId: string, projectId: string) =>
+  request<Domain>(`/api/v1/domains/${domainId}/verify/provider`, {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId, project_id: projectId }),
+  });
 
 /* ---- Findings, assets, evidence ---------------------------------------------------------- */
 

@@ -93,6 +93,41 @@ class Config:
         set COOKIE_SECURE=1 in any real deployment (docs/DEPLOYMENT.md)."""
         return os.environ.get("COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
 
+    # --- deployment providers (Vercel, Netlify, Cloudflare Pages) --------------------------------
+
+    @property
+    def provider_token_keys(self) -> list[str]:
+        """Fernet keys that encrypt provider tokens at rest. The first encrypts; all decrypt, so a key
+        can be rotated by prepending a new one. Empty means provider connections are disabled."""
+        raw = os.environ.get("PROVIDER_TOKEN_ENCRYPTION_KEY", "")
+        return [key.strip() for key in raw.split(",") if key.strip()]
+
+    @property
+    def public_api_url(self) -> str:
+        """The API's public base URL. OAuth redirect URIs are built from it and must match, exactly,
+        what is registered with each provider."""
+        return os.environ.get("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
+
+    @property
+    def frontend_url(self) -> str:
+        """Where the browser is sent after an OAuth callback."""
+        return os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+    def provider_credentials(self, provider: str) -> tuple[str, str]:
+        """(client id, client secret) for a provider, from the environment. Never sent to the browser."""
+        prefix = provider.upper()
+        return os.environ.get(f"{prefix}_CLIENT_ID", ""), os.environ.get(f"{prefix}_CLIENT_SECRET", "")
+
+    @property
+    def vercel_integration_slug(self) -> str:
+        return os.environ.get("VERCEL_INTEGRATION_SLUG", "")
+
+    @property
+    def cloudflare_oauth_scopes(self) -> list[str]:
+        """The scopes the Cloudflare OAuth client was created with (its Pages read and account read
+        scopes). Cloudflare does not publish the identifiers, so the operator supplies them."""
+        return os.environ.get("CLOUDFLARE_OAUTH_SCOPES", "").split()
+
     @property
     def cors_origins(self) -> list[str]:
         raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
