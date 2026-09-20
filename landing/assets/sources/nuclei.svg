@@ -1,0 +1,6 @@
+<svg width="130" height="36" viewBox="0 0 130 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="15" cy="18" r="11" stroke="#888" stroke-width="1.8" fill="none"/>
+      <circle cx="15" cy="18" r="6" stroke="#F97316" stroke-width="1.8" fill="none"/>
+      <circle cx="15" cy="18" r="2" fill="#F97316"/>
+      <text x="34" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">Nuclei</text>
+    </svg>

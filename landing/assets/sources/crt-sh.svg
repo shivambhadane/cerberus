@@ -1,0 +1,5 @@
+<svg width="125" height="36" viewBox="0 0 125 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7 10C7 7.8 8.8 6 11 6H19C21.2 6 23 7.8 23 10V26C23 28.2 21.2 30 19 30H11C8.8 30 7 28.2 7 26V10Z" stroke="#888" stroke-width="2" fill="none"/>
+      <path d="M11 12H19M11 18H19M11 24H15" stroke="#F97316" stroke-width="1.8" stroke-linecap="round"/>
+      <text x="31" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">crt.sh CT</text>
+    </svg>

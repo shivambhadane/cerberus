@@ -1,0 +1,5 @@
+<svg width="135" height="36" viewBox="0 0 135 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6 18L15 9L24 18L15 27L6 18Z" stroke="#888" stroke-width="2" fill="none"/>
+      <circle cx="15" cy="18" r="3" fill="#F97316"/>
+      <text x="32" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">MITRE CVE</text>
+    </svg>

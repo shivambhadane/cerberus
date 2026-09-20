@@ -1,0 +1,5 @@
+<svg width="140" height="36" viewBox="0 0 140 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="15" cy="18" r="13" stroke="#888" stroke-width="2" fill="none"/>
+      <path d="M15 9V18L21 21" stroke="#F97316" stroke-width="2" stroke-linecap="round"/>
+      <text x="36" y="24" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="16" letter-spacing="0.04em" fill="#333">FIRST EPSS</text>
+    </svg>
