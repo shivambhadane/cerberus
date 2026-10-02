@@ -57,3 +57,19 @@ def test_missing_enrichment_does_not_crash():
     result = score_finding(bare, "medium", None, 443)
     assert 0 <= result.risk_score <= 100
     assert result.reasoning
+
+
+def test_the_documented_weights_are_the_ones_actually_used():
+    """The four weights are a stated property of this project (scoring/README.md, docs/code.md,
+    the dashboard's own explanation), so a silent edit here would quietly invalidate every
+    published description of how a score is reached. They also must sum to 1.0, or a "0-100"
+    score could not reach 100."""
+    from scoring.engine import DEFAULT_WEIGHTS
+
+    assert DEFAULT_WEIGHTS == {
+        "kev_status": 0.35,
+        "epss_score": 0.25,
+        "asset_criticality": 0.25,
+        "exposure_context": 0.15,
+    }
+    assert sum(DEFAULT_WEIGHTS.values()) == 1.0

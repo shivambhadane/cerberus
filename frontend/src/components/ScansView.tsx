@@ -4,10 +4,81 @@ import { ACTIVE_SCAN_STATUSES as ACTIVE, ApiError, listDomains, listScans, start
 import { duration, formatDate, relativeTime } from "../lib/format";
 import { toHash, useRoute } from "../lib/router";
 import { useApi } from "../lib/useApi";
-import type { Domain, Scan } from "../types";
+import type { Domain, Scan, ScanProgress } from "../types";
+import { Icon } from "./icons";
 import { Badge, Banner, EmptyState, ErrorBanner, PageHeader, Pagination, SkeletonRows, StatusBadge, TableWrap } from "./ui";
 
 const POLL_MS = 4000;
+
+// Plain-language labels for core.pipeline.SCAN_STAGES - kept in the same order, so a stage this
+// scan's profile never reaches (a passive scan stops after DNS resolution) simply never appears
+// as a row rather than being guessed at.
+const STAGE_LABEL: Record<string, string> = {
+  authorization: "Authorization",
+  asset_discovery: "Asset discovery",
+  dns_resolution: "DNS resolution",
+  port_service_discovery: "Port & service discovery",
+  http_discovery: "HTTP discovery",
+  vulnerability_scan: "Vulnerability scan",
+  enrichment: "Enrichment",
+  risk_analysis: "Risk analysis",
+  report: "Report",
+};
+
+const COUNT_LABEL: Record<string, string> = {
+  subdomains: "Subdomains found",
+  hosts_resolved: "Hosts resolved",
+  open_ports: "Open ports",
+  technologies: "Technologies identified",
+  detections: "Vulnerability detections",
+  findings: "Findings",
+  // Not scoped to this scan: the scoring stage re-scores every finding for the account against
+  // current KEV/EPSS data (scoring/engine.py, score_pending_findings). Labelled so a passive scan
+  // that found nothing cannot appear to have scored hundreds of its own findings.
+  scored: "Findings re-scored (all targets)",
+};
+
+/** The real stage checklist for one scan: a tick for what has actually finished, a dot for
+ * what is running now, and a dash - not a pending circle - for a stage this scan's profile
+ * never reached, once the scan itself is done. Nothing here is a guess or a timer. */
+function StageProgress({ progress, scanIsDone }: { progress: ScanProgress; scanIsDone: boolean }) {
+  const counts = Object.entries(progress.counts).filter(([key]) => key in COUNT_LABEL);
+  return (
+    <div className="stack" style={{ gap: "var(--space-2)" }}>
+      <ul className="plain-list" role="list" aria-label="Scan progress">
+        {progress.stages.map((stage) => {
+          const done = progress.completed.includes(stage);
+          const current = !done && progress.current === stage;
+          const state = done ? "done" : current ? "current" : scanIsDone ? "skipped" : "pending";
+          return (
+            <li key={stage} className="connection-row" aria-current={current ? "step" : undefined}>
+              <span className="connection-name" style={{ flexDirection: "row", alignItems: "center", gap: "var(--space-2)" }}>
+                {state === "done" && <Icon name="check" />}
+                {state === "current" && <span aria-hidden="true">●</span>}
+                {state === "pending" && <span aria-hidden="true">○</span>}
+                {state === "skipped" && <span aria-hidden="true">—</span>}
+                <span className={state === "skipped" ? "muted" : undefined}>{STAGE_LABEL[stage] ?? stage}</span>
+              </span>
+              <span className="sr-only">
+                {state === "done" ? "done" : state === "current" ? "in progress" : state === "skipped" ? "did not run" : "pending"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {counts.length > 0 && (
+        <dl className="facts" aria-label="Live counts from this scan">
+          {counts.map(([key, value]) => (
+            <Fragment key={key}>
+              <dt>{COUNT_LABEL[key]}</dt>
+              <dd className="mono">{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
 
 const PROFILES = [
   { id: "safe", label: "Safe", note: "Default", description: "Non-destructive detection only: known CVEs, exposed panels and files, misconfiguration and TLS issues, at medium severity and above.", optIn: false },
@@ -132,6 +203,7 @@ function ScanRow({ scan, open, onToggle }: { scan: Scan; open: boolean; onToggle
           <td colSpan={7}>
             <div className="stack" style={{ gap: "var(--space-2)" }}>
               <p className="muted mono">Scan {scan.scan_id} · started {formatDate(scan.started_at)}</p>
+              {scan.progress && <StageProgress progress={scan.progress} scanIsDone={!running} />}
               {scan.error && <Banner tone="error" role="alert"><strong>The scan failed.</strong>{scan.error}</Banner>}
               {scan.warnings.length > 0 && (
                 <Banner tone="warning">

@@ -52,6 +52,7 @@ what the screen is for.
 | **Assets** | Hosts and ports with their technology. Each shows its criticality and whether that is **inferred** (a guess from the hostname) or **set by you**, editable in place; saving re-ranks that asset's findings straight away. |
 | **Evidence** | Raw tool output, exactly as recorded before Cerberus normalized it, narrowable to one asset or one scan. |
 | **Scans** | Start a scan against one of your **verified** domains (with the profile picker and its opt-in gate) and browse scan history, including the warnings a scan finished with. There is no "I am authorised" checkbox: the verified domain is the authorisation. With no verified target, this screen sends you to Targets. |
+| **Test Labs** | A fixed list of sanctioned public benchmark sites (Acunetix TestASP/TestPHP, IBM Altoro Mutual) and local Docker labs (the built-in Apache CVE lab, OWASP Juice Shop, DVWA), each with its known vulnerabilities, the Docker command to start it, and an **Add as target** button that verifies it instantly — no DNS, no platform account. **Known issue:** this screen has not had its accessibility pass yet; see [Known gaps](#known-gaps). |
 
 Filters, sort, page, and the selected finding all live in the URL (`#/findings?status=active&sort=cvss_score&finding=…`),
 so a view can be linked, reloaded, and walked with the back button. The Overview's cards and KPI links
@@ -81,6 +82,7 @@ src/
     ├── ProfileView.tsx      the Profile page
     ├── DomainsView.tsx      "Targets": custom domain (DNS record) or deployment
     ├── DeploymentProviders.tsx  connect Vercel / Netlify / Cloudflare, pick a project, Add & verify
+    ├── TestLabsView.tsx     "Test Labs": sanctioned public benchmarks and Docker labs, verified instantly
     ├── OverviewView.tsx  FindingsView.tsx  FindingDetail.tsx  CriticalityEditor.tsx
     ├── AssetsView.tsx  ObservationsView.tsx  ScansView.tsx  EnrichmentBanner.tsx
 e2e/dashboard.e2e.cjs        the browser test
@@ -131,7 +133,11 @@ The chart titles state the finding ("7 of 136 active findings are high or critic
 
 ## Accessibility
 
-Audited against WCAG 2.1 AA with axe-core plus manual checks; **zero axe violations on every screen**.
+Audited against WCAG 2.1 AA with axe-core plus manual checks. **Zero axe violations on every screen
+except Test Labs** (added after the last full audit): that screen has a contrast failure (2.09:1 on the
+vulnerability pills, against a 4.5:1 requirement, and 11px text below this design system's own 12px
+floor), a heading-level skip, and docker-command blocks that scroll but are not keyboard-reachable. See
+[Known gaps](#known-gaps).
 
 - Landmarks (the sidebar `aside`, a top bar `header`, a labelled primary `nav`, `main`), one `h1`, a skip link, and a per-screen
   document title. The current screen is marked with `aria-current="page"`.
@@ -193,3 +199,8 @@ It never starts a scan; the form is only checked for its gating rules. Screensho
   keep per-scan snapshots of the counts.
 - No email verification or password reset in the local login yet, and no "sign out everywhere" control.
 - The Profile page is read-only: name and photo come from the sign-in provider and are not editable here.
+- **Test Labs has not had an accessibility pass** (see [Accessibility](#accessibility) above) or the design
+  review the rest of the dashboard went through.
+- Adding a Test Labs target through `scripts/add_test_target.py` directly (rather than the dashboard's
+  own "Add as target" button) records it as `dns_txt`-verified, which is not true — it bypasses proof
+  entirely. Use the dashboard button, which correctly records `verification_method: "testbed"`.

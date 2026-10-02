@@ -133,10 +133,70 @@ infrastructure we don't own the whole stack of." See [RULES_OF_ENGAGEMENT.md §4
         replayed OAuth state, and disconnect. Migrations checked on SQLite, copies of the real databases and PostgreSQL 16.
       - Vercel can also be connected with a **pasted access token** (no integration to create or publish): same encryption,
         ownership checks and isolation; broader token, so the UI says to scope it to one team and expire it.
-      - **Not yet:** a connection to a real Vercel, Netlify or Cloudflare account has never been made, so all three
-        clients are unproven against the live services. Netlify's token endpoint is undocumented and its tokens have
-        no scopes; Cloudflare's Pages scope name is unpublished; a Vercel integration must be public before others can
-        install it. More platforms (GitHub Pages, Render, Fly.io, Railway) would each be one module.
+      - **Proven live since:** a real Netlify OAuth connection verified a `*.netlify.app` site, a real
+        Cloudflare Pages OAuth connection verified `*.pages.dev` sites across 8 live projects, and a real
+        Vercel access token verified a `*.vercel.app` app (its re-check at the next scan correctly flipped the
+        target to `failed` once the token's short expiry passed — the designed behaviour, confirmed in
+        practice). `scripts/setup_cloudflare_oauth.py` configures Cloudflare Pages OAuth with `page.read` and
+        `pages.metadata_read` scopes. A Vercel *integration* (as opposed to its token fallback) is still subject
+        to Vercel's public marketplace review for multi-tenant apps. More platforms (GitHub Pages, Render, Fly.io, Railway)
+        would each be one module.
+- [x] **Local HTTPS, stale-API detection, and a Cloudflare OAuth setup script.** `./run.sh https` serves the
+      API and dashboard over `https://localhost` with a certificate name-constrained to `localhost` only
+      (`scripts/local_https.sh`), for providers that refuse an `http://` redirect URL. `./run.sh` now detects
+      and restarts an API left running on old code or a changed `.env`, and `ensure_enrichment` refreshes
+      CISA KEV/EPSS automatically on setup and start, not only the first time. `scripts/setup_cloudflare_oauth.py`
+      creates Cloudflare's OAuth client over its API, because the dashboard form is unreliable and Cloudflare
+      does not publish its Pages scope names.
+- [x] **Test Labs & Benchmarks.** A dashboard screen (and `GET`/`POST /api/v1/domains/testbeds`) listing
+      sanctioned public benchmark sites (Acunetix TestASP/TestPHP, IBM Altoro Mutual) and local Docker labs
+      (the built-in Apache CVE lab, OWASP Juice Shop, DVWA), each addable as an **already-verified** target in
+      one click — no DNS record, no platform account. Migration `0008` lets more than one account verify the
+      same shared benchmark address, by excluding `testbed`/`lab` rows from the one-verified-owner rule.
+      - **Fixed since:** the three Docker labs resolve to `127.0.0.1`, and the pipeline used to grant that
+        scan a blanket `allow_private_addresses`, opening the whole RFC1918 range and the cloud metadata
+        address, not just the lab itself. Narrowed to `core/scope.py`'s `allow_loopback_only`, which permits
+        exactly `127.0.0.1`/`::1` and nothing broader (`tests/test_scope.py`). Any signed-in user can still
+        reach this server's own loopback interface, which remains fine for a single operator and worth
+        gating on a shared deployment (see [DEPLOYMENT.md §5](DEPLOYMENT.md#5-scanning-from-the-deployed-api)).
+      - **Still open:** the screen has 3 outstanding axe violations (contrast, heading order, keyboard focus
+        on the docker-command blocks; see [frontend/README.md](../frontend/README.md#known-gaps)).
+        `scripts/add_test_target.py` records a testbed as `dns_txt`-verified rather than `testbed`-verified
+        if used instead of the dashboard's own button.
+- [x] **Admin: read-only cross-tenant visibility.** `users.is_admin` (migration `0009`), gated by normal
+      sign-in — not a bypass of it. An admin sees every account's domains, scans and findings
+      (`GET /api/v1/admin/{overview,users,domains,scans}`) and nothing else: `POST /scans` has no
+      awareness the flag exists, so an admin can still only scan a verified domain *they themselves*
+      own, exactly like anyone else. No API sets the flag; only `scripts/grant_admin.py`, with direct
+      database access, the same trust boundary as `scripts/claim_legacy.py`. See
+      [API.md §5](API.md#5-admin). Verified up/down/up on copies of both real databases and on
+      PostgreSQL 16, and in a real browser: a non-admin sees no nav link, cannot reach the routes, and
+      hitting `#/admin` directly shows "Not found"; axe reports 0 violations on the new screen.
+- [x] **Real per-stage scan progress.** Migration `0010` adds `scans.progress`, written by
+      `core/pipeline.py`'s `_record_stage` as each real stage of `discovery/runner.py`'s pipeline
+      genuinely completes (asset discovery, DNS resolution, port/service discovery, HTTP discovery,
+      vulnerability scanning, enrichment, risk analysis, report) - never a timer, never guessed. A
+      stage the scan's profile never reaches (a `passive` scan stops after DNS resolution) is simply
+      absent, not invented. Exposed on `GET /api/v1/scans/{id}` and the list endpoint
+      ([API.md](API.md#post-apiv1scans)); the Scans screen renders it as a real checklist (✓ done,
+      ● current, — did not run) with live counts. Tested at the `discovery/runner.py` callback level
+      (order, counts, never fires for a skipped stage) and at the `_record_stage` persistence level
+      (accumulation, idempotence, out-of-order safety - a real bug the tests caught before release).
+- [x] **Developer-friendly finding explanations.** `scoring/explain.py` turns a finding into the
+      questions a developer actually asks - what was found, what's wrong, why it matters, how it was
+      detected, how serious it is, why it's ranked here, what to do, how to verify - computed at read
+      time from data the finding/CVE/asset already stored, not a model and not a new column.
+      `why_this_priority` reuses the existing, already-tested `reasoning` sentence rather than risking
+      a second explanation drifting from the real score. `what_to_do` never invents a patched-version
+      number: NVD's affected-version ranges are queried live and not stored, so remediation names the
+      technology actually detected and points at the vendor's own advisories rather than guessing a
+      fix. `FindingDetail`'s first screen is now this plain-language summary, not the bare CVE id -
+      CVSS/CVE/evidence are still there, just no longer first. See
+      [API.md §3](API.md#get-apiv1findingsfinding_id).
+- [x] **Attack Surface view.** A new dashboard screen tracing every verified domain to its assets to
+      their findings, built entirely from the existing domains/assets/findings endpoints - no new
+      backend route, no graph database, exactly as scoped ("PostgreSQL + existing relationships are
+      sufficient"). Every row links back to real evidence.
 - [ ] One-pager / slide deck
 
 ## Testing levels (see [RULES_OF_ENGAGEMENT.md](RULES_OF_ENGAGEMENT.md))

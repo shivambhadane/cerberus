@@ -5,6 +5,10 @@ import {
   onAuthStateChanged,
 } from "./lib/firebase";
 import type {
+  AdminDomainList,
+  AdminOverview,
+  AdminScanList,
+  AdminUserList,
   Asset,
   AuthResult,
   Connection,
@@ -381,3 +385,21 @@ export const startScan = (domainId: string, profile: string, acceptProfile: bool
   });
 
 export const getOverview = (signal?: AbortSignal) => request<Overview>("/api/v1/overview", { signal });
+
+/* ---- Admin: read-only cross-tenant visibility --------------------------------------------
+ * Every call here 404s for a non-admin account, identical to a route that does not exist. None
+ * of it grants any scanning power: starting a scan is unaffected and still requires a verified
+ * domain the caller themselves owns.
+ */
+
+export const getAdminOverview = (signal?: AbortSignal) =>
+  request<AdminOverview>("/api/v1/admin/overview", { signal });
+
+export const listAdminUsers = (page = 1, signal?: AbortSignal) =>
+  request<AdminUserList>(`/api/v1/admin/users${query({ limit: PAGE_SIZE, offset: offsetFor(page) })}`, { signal });
+
+export const listAdminDomains = (page = 1, signal?: AbortSignal) =>
+  request<AdminDomainList>(`/api/v1/admin/domains${query({ limit: PAGE_SIZE, offset: offsetFor(page) })}`, { signal });
+
+export const listAdminScans = (page = 1, signal?: AbortSignal) =>
+  request<AdminScanList>(`/api/v1/admin/scans${query({ limit: PAGE_SIZE, offset: offsetFor(page) })}`, { signal });

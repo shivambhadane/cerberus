@@ -43,6 +43,20 @@ def test_development_scope_allows_private_addresses():
     assert development_scope("localhost").permits_address("127.0.0.1")
 
 
+def test_allow_loopback_only_grants_nothing_but_the_exact_loopback_address():
+    """The Test Labs grant (core/pipeline.py): narrower than allow_private_addresses on purpose.
+    A target that is only ever 127.0.0.1 must never open this host's own private network or the
+    cloud metadata endpoint — the exact failure a blanket allow_private_addresses would risk."""
+    scope = Scope(domain="127.0.0.1", allow_loopback_only=True)
+    assert scope.permits_address("127.0.0.1")
+    assert scope.permits_address("::1")
+    assert not scope.permits_address("169.254.169.254")  # cloud metadata endpoint
+    assert not scope.permits_address("192.168.1.1")       # RFC1918
+    assert not scope.permits_address("10.0.0.5")           # RFC1918
+    assert not scope.permits_address("172.16.0.1")         # RFC1918
+    assert not scope.permits_address("93.184.216.34")      # a real public address: still just scope
+
+
 def test_excluded_ports_are_refused():
     scope = Scope(domain="example.com", excluded_ports={22, 3389})
     assert not scope.permits_port(22)

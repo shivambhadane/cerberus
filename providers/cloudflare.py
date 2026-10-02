@@ -11,10 +11,12 @@ https://dash.cloudflare.com/.well-known/openid-configuration:
   * API: GET /client/v4/accounts, GET /client/v4/accounts/{id}/pages/projects[/{name}], whose project
     objects carry `subdomain` (the *.pages.dev hostname) and `domains` (custom domains).
 
-LIMITATION: the identifier of the read-only Pages scope is not published in the public docs (the list is
-served by an authenticated endpoint, GET /client/v4/oauth/scopes; the docs' examples use names like
+The identifier of the read-only Pages scope is not published in the public docs (the full list is served
+by an authenticated endpoint, GET /client/v4/oauth/scopes; the docs' examples use names like
 `workers-platform.read`). Rather than guess, the scopes are supplied by the operator in
-CLOUDFLARE_OAUTH_SCOPES, and the provider reports itself as not configured until they are.
+CLOUDFLARE_OAUTH_SCOPES, and the provider reports itself as not configured until they are. For the
+record, the one this adapter needs turned out to be `pages.metadata_read` (see docs/DEPLOYMENT.md 7.5);
+it is still not hardcoded here, because the operator's OAuth client must have been created with it.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ TOKEN_URL = "https://dash.cloudflare.com/oauth2/token"
 USERINFO_URL = "https://dash.cloudflare.com/oauth2/userinfo"
 API = "https://api.cloudflare.com/client/v4"
 MAX_ACCOUNTS = 20
-PAGE_SIZE = 100
+PAGE_SIZE = 10
 
 
 class CloudflareProvider(DeploymentProvider):
@@ -57,8 +59,8 @@ class CloudflareProvider(DeploymentProvider):
         return bool(super().is_configured() and self.scopes)
 
     def requested_scopes(self) -> list[str]:
-        # `openid` for the account identity, `offline_access` for a refresh token.
-        return list(dict.fromkeys([*self.scopes, "openid", "offline_access"]))
+        # `offline_access` for a refresh token. Cloudflare OAuth does not use `openid`.
+        return list(dict.fromkeys([*self.scopes, "offline_access"]))
 
     def build_authorization_url(self, state: str, redirect_uri: str, code_challenge: str | None) -> str:
         if not code_challenge:
@@ -128,14 +130,20 @@ class CloudflareProvider(DeploymentProvider):
         return accounts[:MAX_ACCOUNTS]
 
     def get_account(self, tokens: ProviderTokens) -> ProviderAccount:
-        info = self._get(tokens, USERINFO_URL, "reading the account")
-        subject = info.get("sub") if isinstance(info, dict) else None
-        if not isinstance(subject, str) or not subject:
-            raise ProviderError("bad_response", "Cloudflare did not identify the account.")
+        subject = None
         try:
-            names = [str(a.get("name")) for a in self._accounts(tokens) if a.get("name")]
-        except ProviderError:
-            names = []  # the label is cosmetic; identity is the subject
+            info = self._get(tokens, USERINFO_URL, "reading the account")
+            subject = info.get("sub") if isinstance(info, dict) else None
+        except Exception:
+            subject = None
+
+        accounts = self._accounts(tokens)
+        if not subject:
+            if not accounts or not accounts[0].get("id"):
+                raise ProviderError("bad_response", "Cloudflare did not identify the account.")
+            subject = str(accounts[0]["id"])
+
+        names = [str(a.get("name")) for a in accounts if a.get("name")]
         return ProviderAccount(account_id=subject, label=", ".join(names)[:255] or "Cloudflare account")
 
     @staticmethod

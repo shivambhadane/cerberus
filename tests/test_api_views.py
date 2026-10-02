@@ -269,6 +269,25 @@ def test_finding_detail_says_where_the_criticality_came_from(world):
     assert after["asset_criticality_reason"] == "customer-facing checkout"
 
 
+def test_finding_detail_includes_the_developer_friendly_explanation(world):
+    client, web = world["client"], world["web"]
+    finding_id = client.get(f"/api/v1/findings?asset_id={web.id}").json()["findings"][0]["id"]
+
+    body = client.get(f"/api/v1/findings/{finding_id}").json()
+    explanation = body["explanation"]
+    assert set(explanation) == {
+        "what_we_found", "what_is_the_problem", "why_it_matters", "how_it_was_detected",
+        "how_serious", "why_this_priority", "what_to_do", "how_to_verify",
+    }
+    assert web.hostname in explanation["what_we_found"]
+    assert explanation["how_it_was_detected"]["host"] == web.hostname
+    assert explanation["how_serious"]["risk_score"] == body["risk_score"]
+    assert explanation["why_this_priority"] == body["reasoning"]  # the same tested sentence, not a new one
+    # updating the finding still returns a fresh, consistent explanation
+    status = client.patch(f"/api/v1/findings/{finding_id}", json={"status": "acknowledged"}).json()
+    assert status["explanation"]["how_serious"]["risk_score"] == status["risk_score"]
+
+
 # --- overview -----------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("score,band", [

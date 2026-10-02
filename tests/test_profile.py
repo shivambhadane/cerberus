@@ -102,7 +102,7 @@ def test_a_name_is_filled_in_when_we_had_none(client, session, make_user):
 def test_the_profile_never_exposes_credentials(client):
     body = sign_in_as(client).json()
     assert set(body) == {"id", "email", "name", "email_verified", "created_at", "last_login_at",
-                         "picture_url", "auth_provider"}
+                         "picture_url", "auth_provider", "is_admin"}
 
 
 # --- an email address must be verified before it can claim an account -----------------------------

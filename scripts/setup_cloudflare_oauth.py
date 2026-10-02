@@ -31,7 +31,7 @@ API = "https://api.cloudflare.com/client/v4"
 
 # What Cerberus calls: the account list, and Pages projects. Nothing that writes.
 WANTED = ("pages", "account")
-ALWAYS = ("openid", "offline_access")
+ALWAYS = ("offline_access",)
 
 
 class Refused(Exception):
@@ -57,7 +57,9 @@ def call(path: str, token: str, method: str = "GET", body: dict | None = None, f
         try:
             errs = json.loads(detail).get("errors", [])
             code = str(errs[0].get("code", "")) if errs else ""
-            detail = "; ".join(f"{x.get('code')}: {x.get('message')}" for x in errs) or detail
+            chain = errs[0].get("error_chain", []) if errs else []
+            chain_text = f" -> {'; '.join(c.get('message', '') for c in chain)}" if chain else ""
+            detail = ("; ".join(f"{x.get('code')}: {x.get('message')}" for x in errs) + chain_text) or detail
         except Exception:
             pass
         message = f"Cloudflare refused {method} {path} ({e.code}): {detail}"
@@ -69,8 +71,13 @@ def call(path: str, token: str, method: str = "GET", body: dict | None = None, f
 
 
 def clean(raw: str) -> str:
-    """What a paste brings along: the terminal's bracketed-paste markers, quotes, whitespace."""
-    return re.sub(r"\x1b\[20[01]~", "", raw).strip().strip("\"'").strip()
+    """What a paste brings along: terminal bracketed-paste markers, quotes, leading Bearer, whitespace."""
+    s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z~]", "", raw).strip()
+    s = s.strip("\"'`").strip()
+    if s.lower().startswith("bearer "):
+        s = s[7:].strip()
+    # Strip any invisible control chars or stray spaces
+    return re.sub(r"[\x00-\x20\x7f-\xa0]", "", s)
 
 
 def read_token() -> str:
@@ -93,6 +100,12 @@ def read_token() -> str:
             "  2. Run with --visible to see what you paste (the token then appears on screen)."
         )
     print(f"token: received {len(token)} characters")
+    if len(token) != 40:
+        print(
+            "  [Note] Standard Cloudflare API tokens are exactly 40 characters long.\n"
+            "  Make sure you copied an API Token from https://dash.cloudflare.com/profile/api-tokens\n"
+            "  (and not a Global API Key, which does not use Bearer auth)."
+        )
     return token
 
 
@@ -142,7 +155,9 @@ def choose_account(token: str) -> dict:
         print("That needs the 'Account Settings: Read' permission on the token. You can skip it: your")
         print("account ID is the 32-character code in the dashboard address, dash.cloudflare.com/<ID>/...\n")
         while True:
-            typed = input("Account ID: ").strip().lower()
+            typed = input("Account ID (or 'q' to abort): ").strip().lower()
+            if typed in ("q", "quit", "exit"):
+                sys.exit("Setup aborted.")
             if ACCOUNT_ID.match(typed):
                 return {"id": typed, "name": typed}
             print("  That is not a 32-character hex account ID. Copy it from the address bar.")
@@ -217,7 +232,15 @@ def main() -> None:
     names = [n for n in names if isinstance(n, str)]
     print(f"{len(names)} scopes available to this token.")
 
-    picked = sorted({n for n in names if any(w in n.lower() for w in WANTED) and ".read" in n.lower()})
+    CORE_PAGES = {"page.read", "pages.metadata_read", "account-settings.read"}
+    picked = sorted({
+        n for n in names
+        if n in CORE_PAGES or (
+            any(w in n.lower() for w in ("pages", "page", "account"))
+            and ("read" in n.lower())
+            and not n.endswith(".write") and not n.endswith(".edit")
+        )
+    })
     if not picked:
         print("\nNo read scope matched 'pages' or 'account'. All scopes:")
         for n in sorted(names):
@@ -228,7 +251,7 @@ def main() -> None:
     for n in picked:
         print(f"   {n}")
     extra = [n for n in ALWAYS if n in names]
-    print(f"plus: {', '.join(extra) or '(openid/offline_access not listed; Cerberus requests them anyway)'}")
+    print(f"plus: {', '.join(extra) or '(offline_access not listed; Cerberus requests it anyway)'}")
     if input("\nCreate the OAuth client with these? [y/N]: ").strip().lower() != "y":
         sys.exit("Nothing created.")
 

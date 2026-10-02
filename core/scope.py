@@ -25,6 +25,11 @@ class Scope:
     excluded_hosts: set[str] = field(default_factory=set)
     excluded_ports: set[int] = field(default_factory=set)
     allow_private_addresses: bool = False
+    # A narrower grant than allow_private_addresses: permits ONLY the exact loopback addresses
+    # (127.0.0.1, ::1), never the RFC1918 ranges, link-local, or the cloud metadata address
+    # (169.254.169.254). This exists for one caller: a Test Labs Docker lab target, which must
+    # never be able to reach this host's own private network, only itself.
+    allow_loopback_only: bool = False
 
     def __post_init__(self) -> None:
         self.domain = self.domain.lower().rstrip(".")
@@ -54,6 +59,8 @@ class Scope:
             address = ipaddress.ip_address(ip)
         except ValueError:
             return False
+        if self.allow_loopback_only:
+            return address.is_loopback
         return not (address.is_private or address.is_loopback or address.is_link_local
                     or address.is_multicast or address.is_reserved)
 

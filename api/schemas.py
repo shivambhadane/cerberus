@@ -38,6 +38,8 @@ class UserOut(BaseModel):
     last_login_at: UtcDatetime | None = None
     picture_url: str | None = None
     auth_provider: str | None = None
+    # Read-only cross-tenant visibility (api/admin.py); never settable through this or any API.
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -129,6 +131,13 @@ class ScanCreated(BaseModel):
     profile: str
 
 
+class ScanProgress(BaseModel):
+    stages: list[str]
+    completed: list[str]
+    current: str | None = None
+    counts: dict[str, int] = {}
+
+
 class ScanStatus(BaseModel):
     scan_id: str
     target_domain: str
@@ -138,6 +147,9 @@ class ScanStatus(BaseModel):
     completed_at: UtcDatetime | None = None
     error: str | None = None
     warnings: list[str] = []
+    # Real per-stage progress (core.pipeline.SCAN_STAGES); null for a scan that predates this
+    # column, never a fabricated 0% to fill the gap.
+    progress: ScanProgress | None = None
 
 
 class ScanSummary(ScanStatus):
@@ -147,6 +159,61 @@ class ScanSummary(ScanStatus):
 class ScanList(BaseModel):
     total: int
     scans: list[ScanSummary]
+
+
+# --- admin: read-only cross-tenant visibility (api/admin.py) ------------------------------------
+
+class AdminOverview(BaseModel):
+    user_count: int
+    domain_counts: dict[str, int]      # verification_status -> count, across every account
+    scan_counts: dict[str, int]        # status -> count
+    finding_counts: dict[str, int]     # risk band -> count (open findings only)
+
+
+class AdminUserOut(BaseModel):
+    id: str
+    email: str
+    name: str
+    is_admin: bool
+    created_at: UtcDatetime
+    last_login_at: UtcDatetime | None = None
+    domain_count: int
+    scan_count: int
+
+
+class AdminUserList(BaseModel):
+    total: int
+    users: list[AdminUserOut]
+
+
+class AdminDomainOut(BaseModel):
+    id: str
+    domain: str
+    owner_email: str
+    verification_status: str
+    verification_method: str
+    created_at: UtcDatetime
+
+
+class AdminDomainList(BaseModel):
+    total: int
+    domains: list[AdminDomainOut]
+
+
+class AdminScanOut(BaseModel):
+    scan_id: str
+    owner_email: str | None = None  # null for scans run before accounts existed
+    target_domain: str
+    profile: str
+    status: str
+    started_at: UtcDatetime
+    completed_at: UtcDatetime | None = None
+    finding_count: int
+
+
+class AdminScanList(BaseModel):
+    total: int
+    scans: list[AdminScanOut]
 
 
 CRITICALITY_LEVELS = ("low", "medium", "high", "critical")
@@ -206,6 +273,37 @@ class AssetRef(BaseModel):
     port: int
 
 
+class FindingDetectionOut(BaseModel):
+    host: str
+    port: int
+    technology: str | None
+    detection_method: str
+    detected_by_tool: str | None
+
+
+class FindingSeverityOut(BaseModel):
+    risk_score: float | None
+    cvss_score: float | None
+    epss_score: float | None
+    kev_listed: bool
+    asset_criticality: str | None
+
+
+class FindingExplanationOut(BaseModel):
+    """A developer-friendly reading of the same finding, in the order a developer asks the
+    questions. Deterministic, built from stored data only - never a model's guess. See
+    scoring/explain.py."""
+
+    what_we_found: str
+    what_is_the_problem: str
+    why_it_matters: str
+    how_it_was_detected: FindingDetectionOut
+    how_serious: FindingSeverityOut
+    why_this_priority: str | None
+    what_to_do: str
+    how_to_verify: str
+
+
 class FindingDetail(BaseModel):
     id: str
     asset: AssetRef
@@ -226,6 +324,7 @@ class FindingDetail(BaseModel):
     detected_by_tool: str | None
     evidence: str | None
     detected_at: UtcDatetime
+    explanation: FindingExplanationOut
 
 
 class FindingUpdate(BaseModel):

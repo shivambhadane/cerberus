@@ -126,7 +126,10 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "domain": "testasp.vulnweb.com",
         "url": "http://testasp.vulnweb.com",
         "ports": [80],
-        "description": "Classic ASP / Microsoft IIS intentionally vulnerable web application maintained by Acunetix specifically for scanner benchmarking.",
+        "description": (
+            "Classic ASP / Microsoft IIS intentionally vulnerable web application "
+            "maintained by Acunetix specifically for scanner benchmarking."
+        ),
         "vulnerabilities": ["SQL Injection", "Path Traversal", "ASP Source Disclosure", "XSS"],
         "tags": ["Public Benchmark", "ASP / IIS", "Sanctioned"],
         "provider_disclaimer": "Maintained by Acunetix for scanner testing & security education.",
@@ -138,8 +141,16 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "domain": "demo.testfire.net",
         "url": "http://demo.testfire.net",
         "ports": [80],
-        "description": "Simulated online banking portal created by Watchfire / IBM featuring deliberate web application security flaws.",
-        "vulnerabilities": ["SQL Injection", "Administrative Bypass", "Cross-Site Scripting (XSS)", "Session Fixation"],
+        "description": (
+            "Simulated online banking portal created by Watchfire / IBM "
+            "featuring deliberate web application security flaws."
+        ),
+        "vulnerabilities": [
+            "SQL Injection",
+            "Administrative Bypass",
+            "Cross-Site Scripting (XSS)",
+            "Session Fixation",
+        ],
         "tags": ["Public Benchmark", "Banking Portal", "Sanctioned"],
         "provider_disclaimer": "Maintained for public security testing, scanner evaluation & education.",
     },
@@ -150,10 +161,20 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "domain": "testphp.vulnweb.com",
         "url": "http://testphp.vulnweb.com",
         "ports": [80],
-        "description": "Intentionally vulnerable PHP / MySQL web application provided by Acunetix for testing vulnerability scanners.",
-        "vulnerabilities": ["SQL Injection", "Cross-Site Scripting (XSS)", "Directory Traversal", "File Upload"],
+        "description": (
+            "Intentionally vulnerable PHP / MySQL web application provided by "
+            "Acunetix for testing vulnerability scanners."
+        ),
+        "vulnerabilities": [
+            "SQL Injection",
+            "Cross-Site Scripting (XSS)",
+            "Directory Traversal",
+            "File Upload",
+        ],
         "tags": ["Public Benchmark", "PHP / MySQL", "Sanctioned"],
-        "provider_disclaimer": "Maintained by Acunetix for scanner testing. (Note: subject to periodic public server outages).",
+        "provider_disclaimer": (
+            "Maintained by Acunetix for scanner testing. (Note: subject to periodic public server outages)."
+        ),
     },
     "apache-lab": {
         "id": "apache-lab",
@@ -164,8 +185,14 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "ports": [18081, 18082],
         "docker_command": "docker compose -f lab/docker-compose.yml up -d",
         "docker_teardown": "docker compose -f lab/docker-compose.yml down",
-        "description": "Built-in dual Apache lab running Apache 2.4.49 (port 18081) and Apache 2.4.50 (port 18082) with vulnerable CGI configurations.",
-        "vulnerabilities": ["CVE-2021-41773 (Path Traversal / RCE, CISA KEV)", "CVE-2021-42013 (Incomplete fix, CISA KEV)"],
+        "description": (
+            "Built-in dual Apache lab running Apache 2.4.49 (port 18081) and Apache 2.4.50 (port 18082) "
+            "with vulnerable CGI configurations."
+        ),
+        "vulnerabilities": [
+            "CVE-2021-41773 (Path Traversal / RCE, CISA KEV)",
+            "CVE-2021-42013 (Incomplete fix, CISA KEV)",
+        ],
         "tags": ["Docker Lab", "Localhost", "CISA KEV"],
         "provider_disclaimer": "Controlled repeatable Docker testbed bound to 127.0.0.1.",
     },
@@ -178,8 +205,18 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "ports": [3000],
         "docker_command": "docker run -d --name cerberus-juice-shop -p 3000:3000 bkimminich/juice-shop",
         "docker_teardown": "docker rm -f cerberus-juice-shop",
-        "description": "The most modern and sophisticated intentionally vulnerable web application created by OWASP, encompassing the entire OWASP Top 10.",
-        "vulnerabilities": ["OWASP Top 10", "SQL Injection", "Broken Authentication", "Sensitive Data Exposure", "XSS", "Security Misconfiguration"],
+        "description": (
+            "The most modern and sophisticated intentionally vulnerable web application created by OWASP, "
+            "encompassing the entire OWASP Top 10."
+        ),
+        "vulnerabilities": [
+            "OWASP Top 10",
+            "SQL Injection",
+            "Broken Authentication",
+            "Sensitive Data Exposure",
+            "XSS",
+            "Security Misconfiguration",
+        ],
         "tags": ["Docker Lab", "OWASP Top 10", "Node.js / Angular"],
         "provider_disclaimer": "Official OWASP project run locally in Docker.",
     },
@@ -192,8 +229,18 @@ SANCTIONED_TESTBEDS: dict[str, dict] = {
         "ports": [8080],
         "docker_command": "docker run -d --name cerberus-dvwa -p 8080:80 vulnerables/web-dvwa",
         "docker_teardown": "docker rm -f cerberus-dvwa",
-        "description": "Classic PHP/MySQL web application deliberately vulnerable to web security flaws, ideal for benchmarking vulnerability scanners.",
-        "vulnerabilities": ["SQL Injection", "Blind SQLi", "Command Execution", "CSRF", "File Inclusion", "XSS"],
+        "description": (
+            "Classic PHP/MySQL web application deliberately vulnerable to web security flaws, "
+            "ideal for benchmarking vulnerability scanners."
+        ),
+        "vulnerabilities": [
+            "SQL Injection",
+            "Blind SQLi",
+            "Command Execution",
+            "CSRF",
+            "File Inclusion",
+            "XSS",
+        ],
         "tags": ["Docker Lab", "PHP / MySQL", "Classic Testbed"],
         "provider_disclaimer": "Deliberately vulnerable environment run locally in Docker.",
     },

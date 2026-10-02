@@ -122,7 +122,10 @@ cerberus/
 | `uvicorn api.main:app` | REST API |
 | `python scripts/init_db.py` | create or upgrade the database schema |
 | `python scripts/claim_legacy.py EMAIL` | give scans/assets that have no owner to an account |
-| `python scripts/refresh_enrichment.py` | refresh KEV + EPSS (run daily) |
+| `python scripts/refresh_enrichment.py` | refresh KEV + EPSS (run daily; `./run.sh` also runs this automatically whenever the cache is missing or older than 24h) |
+| `python scripts/add_test_target.py EMAIL DOMAIN` | mark any domain `dns_txt`-verified for an account directly in the DB, bypassing proof (operator tool, not an API route) |
+| `python scripts/grant_admin.py EMAIL [--revoke]` | grant or revoke read-only cross-tenant visibility (operator tool; no API sets this) |
+| `python scripts/setup_cloudflare_oauth.py [--diagnose]` | create the Cloudflare OAuth client over Cloudflare's API, because its dashboard form and published scope list are both unreliable; writes `CLOUDFLARE_CLIENT_ID`/`_SECRET`/`_OAUTH_SCOPES` to `.env` |
 | `cd frontend && npm run dev` | dashboard on :5173 |
 | `docker compose up -d` | API + Postgres |
 | `docker compose -f lab/docker-compose.yml up -d` | vulnerable test lab |
@@ -143,7 +146,7 @@ cerberus/
 | [throttle.py](../core/throttle.py) | `FailureLimiter`: failures per key over a sliding window, for sign-in and verification. In-process, matching the single-API-process assumption. |
 | [verification.py](../core/verification.py) | DNS TXT domain verification. Keeps "the record is not there" apart from "DNS could not be asked"; the lookup is injectable, so tests never touch the network. |
 | [ownership.py](../core/ownership.py) | The ownership rule as code: `check_scan_allowed(user, domain, target)` (active user, owns the domain, domain verified, target inside it) raising `OwnershipError` with a stable `code`; `normalize_domain`, `normalize_email`. Knows nothing about passwords or HTTP. |
-| [scope.py](../core/scope.py) | `Scope`: the authorization boundary. `permits_host()` (exact or true subdomain; rejects `evilexample.com`), `permits_address()` (refuses private/loopback/link-local/cloud-metadata unless allowed), `permits_port()`, `filter_hosts()`. `development_scope()` for local labs. |
+| [scope.py](../core/scope.py) | `Scope`: the authorization boundary. `permits_host()` (exact or true subdomain; rejects `evilexample.com`), `permits_address()` (refuses private/loopback/link-local/cloud-metadata unless allowed), `permits_port()`, `filter_hosts()`. `development_scope()` for local labs. `allow_loopback_only` is a narrower grant than `allow_private_addresses` - exact loopback only, used for Test Labs. |
 | [profiles.py](../core/profiles.py) | `ScanProfile` and the `passive` / `safe` / `thorough` profiles. Template selection is an allowlist. A non-overridable safety floor refuses `dos`/`ddos`/`fuzz`/`fuzzing`/`intrusive`/`brute-force` tags and `code`/`file` protocols. `nuclei_args()` builds the nuclei flags; `enforce_safety_floor()`, `audit_nuclei_args()` and `result_is_permitted()` re-check at adapter entry, on the real argv, and on results. `get_profile()` enforces the `thorough` opt-in. |
 | [adapters.py](../core/adapters.py) | The scanner contract. `Observation` (one fact + which tool saw it), `Endpoint`, `ObservationKind`, `DetectionMethod` (`version_inference` vs `active_detection`), the `Scanner` protocols, and the adapter registry (`register`, `available`). |
 | [proc.py](../core/proc.py) | `run_tool()`: the only place external tools run. Always closes stdin and turns timeouts/crashes into `ScannerError`, so "tool failed" never looks like "found nothing". |
@@ -180,6 +183,8 @@ Adding a scanner means writing one file here and calling `register(...)`. Nothin
 
 ## 8. `scoring/` — stage 4
 
+[explain.py](../scoring/explain.py) — `explain()`: the developer-friendly reading of a finding (what was found, what the problem is, why it matters, how it was detected, how serious it is, why this priority, what to do, how to verify). Deterministic, computed at read time from already-stored fields; `why_this_priority` reuses the existing tested `reasoning` sentence rather than building a second one. Never invents a patched-version number NVD/Cerberus does not actually have.
+
 [engine.py](../scoring/engine.py) — `score_finding()` blends four signals using the weights in `config.yaml`:
 KEV status **0.35**, EPSS **0.25**, asset criticality **0.25**, exposure context **0.15** (which is
 where CVSS enters, so severity alone never dominates). It returns a 0–100 score and a reasoning
@@ -193,14 +198,17 @@ does **not** change the score. `score_pending_findings()` re-scores every findin
 | [main.py](../api/main.py) | FastAPI app. Startup: refuses to run with an empty or placeholder `API_SECRET_KEY`, runs migrations, fails orphaned scans. `require_auth` is a constant-time bearer check that rejects empty keys. Errors use one shape: `{"error": {"code", "message"}}`. |
 | [deps.py](../api/deps.py) | What every route depends on: `ApiError`, the database session, and `current_user` — the single place an access token becomes a `User`. Routes never see a token or a header. |
 | [auth.py](../api/auth.py) | `/api/v1/auth/*`: register, login, refresh (rotating, with replay detection), logout, me. Owns the cookie policy and the sign-in throttles. |
-| [domains.py](../api/domains.py) | `/api/v1/domains/*`: claim, list, verify (DNS), and add/verify through a connected platform account. Every route scoped to the caller; someone else's domain is a 404. DNS instructions are omitted for platform-verified targets. |
+| [domains.py](../api/domains.py) | `/api/v1/domains/*`: claim, list, verify (DNS), add/verify through a connected platform account, and the fixed Test Labs allowlist (`/testbeds`). Every route scoped to the caller; someone else's domain is a 404. DNS instructions are omitted for platform-verified targets. |
 | [providers.py](../api/providers.py) | `/api/v1/providers`, `/api/v1/connections/*`: list providers, start a connection, the public OAuth callback, list projects, disconnect. Maps `ProviderServiceError` to HTTP; a provider's 401 is never our 401. |
+| [admin.py](../api/admin.py) | `/api/v1/admin/*`: read-only cross-tenant overview, users, domains, scans, gated by `require_admin` (`api/deps.py`). Grants no scanning power; `POST /scans` does not know this router exists. |
 | [schemas.py](../api/schemas.py) | Pydantic request/response models. |
 
 | Route | Purpose |
 |---|---|
 | `GET /healthz` | liveness (no auth) |
-| `POST /api/v1/scans` | start a scan (`authorized`, `profile`, `accept_profile`); `409` if one is running. There is deliberately no parameter to allow private addresses. |
+| `POST /api/v1/scans` | start a scan (`domain_id`, `profile`, `accept_profile`); `409` if one is running. No parameter opens private addresses — except a `testbed`/`lab`-verified `127.0.0.1` target, which gets `allow_loopback_only` (exact loopback only, never RFC1918 or metadata; see [DEPLOYMENT.md §5](DEPLOYMENT.md#5-scanning-from-the-deployed-api)). |
+| `GET /api/v1/scans/{id}`, `GET /api/v1/scans` | scan status, now including real `progress` (`core/pipeline.py`'s `SCAN_STAGES`) — null until the pipeline has written a stage, never fabricated |
+| `GET /api/v1/domains/testbeds`, `POST /api/v1/domains/testbeds/{id}` | list the sanctioned public benchmarks and Docker labs; add one as an already-verified target (no DNS, no platform account) |
 | `GET /api/v1/scans/{id}` | scan status |
 | `GET /api/v1/scans` | scan history, newest first, with observation counts and warnings |
 | `GET /api/v1/assets` | discovered assets with criticality, its source, and finding counts |
@@ -213,6 +221,7 @@ does **not** change the score. `score_pending_findings()` re-scores every findin
 | `GET /api/v1/providers`, `POST /api/v1/providers/{p}/connect`, `GET /api/v1/providers/{p}/callback` | list providers; start an OAuth flow; the platform's redirect back (no bearer token) |
 | `POST /api/v1/providers/{p}/token` | connect with a pasted access token (Vercel) |
 | `GET /api/v1/connections`, `GET /api/v1/connections/{id}/projects`, `POST /api/v1/connections/{id}/disconnect` | your connected accounts; their projects; forget one |
+| `GET /api/v1/admin/overview`, `GET /api/v1/admin/users`, `GET /api/v1/admin/domains`, `GET /api/v1/admin/scans` | cross-tenant, read-only, `is_admin` only; `404` for everyone else |
 
 Full contract: [docs/API.md](API.md).
 
@@ -228,8 +237,9 @@ Full contract: [docs/API.md](API.md).
 
 ## 10. `frontend/` — dashboard
 
-React 18 + TypeScript + Vite, ~2,000 lines, no runtime dependency beyond React. Full detail, the design
-system, and the accessibility guarantees: [frontend/README.md](../frontend/README.md).
+React 18 + TypeScript + Vite, ~4,400 lines of TypeScript/TSX across 16 components, no runtime dependency
+beyond React and Firebase (auth only). Full detail, the design system, and the accessibility guarantees:
+[frontend/README.md](../frontend/README.md).
 
 | File | What it does |
 |---|---|
@@ -244,7 +254,7 @@ system, and the accessibility guarantees: [frontend/README.md](../frontend/READM
 | [components/icons.tsx](../frontend/src/components/icons.tsx) | The inline icon set (decorative, `aria-hidden`). |
 | [components/OverviewView.tsx](../frontend/src/components/OverviewView.tsx) | Landing page: four KPI cards, Top risks cards, the Risk breakdown bar charts (drawn as lists, so the text carries the data), Recent scans. Polls while a scan runs. |
 | [components/FindingsView.tsx](../frontend/src/components/FindingsView.tsx) | Ranked table: search, status/evidence/risk/KEV filters, sortable columns, pagination. |
-| [components/FindingDetail.tsx](../frontend/src/components/FindingDetail.tsx) | Detail panel: reasoning, evidence, status control, criticality; focus moves in, Escape closes and restores focus. |
+| [components/FindingDetail.tsx](../frontend/src/components/FindingDetail.tsx) | Detail panel, headlined by the plain-language `explanation.what_we_found` (not the bare CVE id): what/why/how-detected/how-serious/why-this-priority/what-to-do/how-to-verify, then evidence, status control and criticality. Focus moves in, Escape closes and restores focus. |
 | [components/CriticalityEditor.tsx](../frontend/src/components/CriticalityEditor.tsx) | Shows whether criticality is *inferred* or *set by you*, and edits it (re-ranks the asset's findings). |
 | [components/AssetsView.tsx](../frontend/src/components/AssetsView.tsx) | Asset inventory with inline criticality editing and links to an asset's findings and evidence. |
 | [components/ObservationsView.tsx](../frontend/src/components/ObservationsView.tsx) | "Evidence" screen: raw observations, filterable by kind, asset, or scan. |
@@ -252,7 +262,10 @@ system, and the accessibility guarantees: [frontend/README.md](../frontend/READM
 | [components/Avatar.tsx](../frontend/src/components/Avatar.tsx) | The person's photo, or initials when there is none or it fails to load (`referrerPolicy="no-referrer"`). |
 | [components/DomainsView.tsx](../frontend/src/components/DomainsView.tsx) | "Targets": the choice between **Custom domain** (DNS TXT) and **Deployment**, and each target with how it was verified. |
 | [components/DeploymentProviders.tsx](../frontend/src/components/DeploymentProviders.tsx) | The Deployment path: a card per provider (connect, project list, Add & verify, disconnect). Refuses to navigate to anything that is not `https:`. |
-| [components/ScansView.tsx](../frontend/src/components/ScansView.tsx) | Start-scan form (profile picker, opt-in gates) plus scan history with the warnings a scan finished with. |
+| [components/TestLabsView.tsx](../frontend/src/components/TestLabsView.tsx) | "Test Labs": the sanctioned public benchmarks and Docker labs, each with its vulnerabilities, the docker command to start it, and an **Add as target** button. Has not had its accessibility pass yet (3 known axe violations; see [frontend/README.md](../frontend/README.md#known-gaps)). |
+| [components/AdminView.tsx](../frontend/src/components/AdminView.tsx) | "Admin", shown only when `user.is_admin`: counts, accounts, targets and scans across every user. Read-only; there is nothing here that starts or affects a scan. |
+| [components/ScansView.tsx](../frontend/src/components/ScansView.tsx) | Start-scan form (profile picker, opt-in gates) plus scan history with the warnings a scan finished with. Each row expands to a real stage checklist (`StageProgress`: ✓ done, ● current, — did not run for this profile) and live counts, driven entirely by `scan.progress`. |
+| [components/AttackSurfaceView.tsx](../frontend/src/components/AttackSurfaceView.tsx) | "Attack Surface": every verified domain traced to its assets to their findings, built entirely from the existing `/domains`, `/assets` and `/findings` endpoints (no new backend route) and linking back to real evidence. No graph database; PostgreSQL's existing relationships are enough, per the brief that asked for this. |
 | [components/EnrichmentBanner.tsx](../frontend/src/components/EnrichmentBanner.tsx) | Warns when the KEV cache is empty or stale. |
 | [e2e/dashboard.e2e.cjs](../frontend/e2e/dashboard.e2e.cjs) | Real-Chrome end-to-end + axe accessibility test (`npm run test:e2e`). |
 
@@ -276,6 +289,9 @@ A finding is one `(asset, CVE)` pair (unique) carrying `risk_score`, `reasoning`
 - [migrations/versions/0004…0005](../migrations/versions/) — users, domains, auth sessions, per-user asset identity.
 - [migrations/versions/0006_user_profile_picture.py](../migrations/versions/0006_user_profile_picture.py) — `users.picture_url`, `users.auth_provider`.
 - [migrations/versions/0007_connected_providers_and_provider_targets.py](../migrations/versions/0007_connected_providers_and_provider_targets.py) — `connected_providers`, `oauth_states`, and the `provider_*` columns on `domains`.
+- [migrations/versions/0008_testbed_domains.py](../migrations/versions/0008_testbed_domains.py) — excludes `testbed`/`lab` from the one-verified-owner index, so Test Labs benchmarks can be verified by more than one account.
+- [migrations/versions/0009_admin_flag.py](../migrations/versions/0009_admin_flag.py) — `users.is_admin`, default `false`.
+- [migrations/versions/0010_scan_progress.py](../migrations/versions/0010_scan_progress.py) — `scans.progress`, default `{}`.
 - [migrations/env.py](../migrations/env.py) — reads the URL from `core.config`; deliberately does not reconfigure application logging.
 - Change the schema: edit `core/models.py`, then `alembic revision --autogenerate -m "..."`, review, commit.
 
@@ -296,25 +312,28 @@ Counts are test functions; parametrised tests expand to more cases (these counts
 | File | Covers |
 |---|---|
 | [test_nuclei.py](../tests/test_nuclei.py) (30) | profile-driven command building, forbidden tags/types, malformed JSONL, dedupe, real-record parsing, detections → findings |
-| [test_adapters.py](../tests/test_adapters.py) (19) | adapter contract, nmap parsing incl. the PTR bug, endpoint dedupe, config reaching adapters, passive-means-passive |
-| [test_api.py](../tests/test_api.py) (22) | auth (incl. empty-key bypass), filters, profile gating, scan conflicts |
-| [test_api_views.py](../tests/test_api_views.py) (22) | dashboard API: search/status/detection filters, NULL-last sorting, paging, scan history and warnings, evidence by target, criticality editing (manual survives re-scan, only that asset re-scored) |
-| [test_migrations.py](../tests/test_migrations.py) (20) | fresh / legacy / drifted databases, adoption at the matching revision, readable refusals, data survival, logging left intact; the provider migrations are additive, constrained, and undo/redo cleanly |
+| [test_adapters.py](../tests/test_adapters.py) (22) | adapter contract, nmap parsing incl. the PTR bug, endpoint dedupe, config reaching adapters, passive-means-passive; the `on_stage` progress callback fires once per real boundary, in order, with true counts, and never for a stage that did not run |
+| [test_api.py](../tests/test_api.py) (37) | auth (incl. empty-key bypass), filters, profile gating, scan conflicts; a new scan has no `progress` until the pipeline writes some, and the list endpoint carries it too once it does |
+| [test_api_views.py](../tests/test_api_views.py) (41) | dashboard API: search/status/detection filters, NULL-last sorting, paging, scan history and warnings, evidence by target, criticality editing (manual survives re-scan, only that asset re-scored); the finding-detail `explanation` field, consistent after a status update |
+| [test_migrations.py](../tests/test_migrations.py) (24) | fresh / legacy / drifted databases, adoption at the matching revision, readable refusals, data survival, logging left intact; the provider, admin-flag and scan-progress migrations are additive, constrained, and undo/redo cleanly |
 | [test_crypto.py](../tests/test_crypto.py) (10) | tokens encrypted at rest, bound to their row, key rotation, tampering and wrong keys refused |
 | [test_profile.py](../tests/test_profile.py) (14, 26 cases) | picture URLs (https only), names, sign-in method; what a Google sign-in records and refreshes; the profile never exposes credentials; an unverified email cannot take over an existing account |
 | [test_provider_clients.py](../tests/test_provider_clients.py) (44, 68 cases) | each provider's requests and response parsing against fakes of the documented responses; platform-hostname rule; id validation |
 | [test_providers_api.py](../tests/test_providers_api.py) (42) | connect / callback / list / disconnect: state single-use, expiry, wrong browser, wrong user, replay, redirect URI, no token in any response |
 | [test_provider_ownership.py](../tests/test_provider_ownership.py) (36, 45 cases) | Add & verify: what the platform must say, forged ids, custom domains refused, first-to-verify, scan-time re-check and `ownership_lost`, DNS verification and scan authorization unchanged |
-| [test_provider_token.py](../tests/test_provider_token.py) (40 cases) | pasted access tokens: proved by using them, stored encrypted, never returned or logged, refused without being echoed, rate limited, isolated, and usable with no OAuth app configured |
+| [test_provider_token.py](../tests/test_provider_token.py) (43 cases) | pasted access tokens: proved by using them, stored encrypted, never returned or logged, refused without being echoed, rate limited, isolated, usable with no OAuth app configured; a malformed team ID is its own error and does not spend a wrong-token attempt |
 | [test_provider_isolation.py](../tests/test_provider_isolation.py) (13) | another user's connection, project, domain and state answer 404 |
+| [test_domains_api.py](../tests/test_domains_api.py) (29 cases) | Test Labs: listing, adding an immediately-verified testbed, cross-account scanning of a shared benchmark address |
+| [test_admin.py](../tests/test_admin.py) (15 cases) | every `/admin/*` route is 404 for a non-admin; an admin sees every account's data; `is_admin` cannot be set by any API; **admin visibility grants no scanning power** — the one test that matters most here |
 | [test_firebase_auth.py](../tests/test_firebase_auth.py) (7) | Firebase token verification, provisioning, linking, expiry; the synthetic test token is refused unless the suite enables it |
 | [test_profiles.py](../tests/test_profiles.py) (14) | the safety floor cannot be lifted |
-| [test_pipeline.py](../tests/test_pipeline.py) (8) | authorization refusal, cache warnings, orphaned scans |
+| [test_pipeline.py](../tests/test_pipeline.py) (13) | authorization refusal, cache warnings, orphaned scans; `_record_stage` marks a stage done, accumulates counts, is idempotent, points `current` at the next stage even if stages are recorded out of order |
 | [test_proc.py](../tests/test_proc.py) (8) | stdin always closed, failures explicit |
 | [test_nvd_pagination.py](../tests/test_nvd_pagination.py) (7) | every NVD page fetched, loud on truncation |
 | [test_ingestion.py](../tests/test_ingestion.py) (7) | dedupe, provenance, criticality |
-| [test_scoring.py](../tests/test_scoring.py) (7) | KEV beats CVSS, reasoning content |
-| [test_scope.py](../tests/test_scope.py) (9) | suffix confusion, private ranges, exclusions |
+| [test_scoring.py](../tests/test_scoring.py) (8) | KEV beats CVSS, reasoning content, and the four documented weights are the ones actually used |
+| [test_scope.py](../tests/test_scope.py) (10) | suffix confusion, private ranges, exclusions; `allow_loopback_only` grants the exact loopback address and nothing broader - not RFC1918, not the cloud metadata address |
+| [test_explain.py](../tests/test_explain.py) (12) | the developer-friendly explanation: grounded in stored data only, honest when NVD gave no description, and never inventing a patched-version number |
 | [test_matcher.py](../tests/test_matcher.py) (3) · [test_secrets.py](../tests/test_secrets.py) (3) | technology parsing · password masking |
 | [integration/test_public_targets.py](../tests/integration/test_public_targets.py) (5) | Level 2 against `scanme.nmap.org`; opt-in, port/service discovery only |
 | [fixtures/](../tests/fixtures/) | records captured from the real nmap and nuclei binaries |

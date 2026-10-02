@@ -372,6 +372,57 @@ there, which the dashboard tells them. Disconnecting a connection that is not yo
 
 ---
 
+### `GET /api/v1/domains/testbeds`
+
+**Test Labs.** The fixed list of sanctioned public benchmark sites (Acunetix TestASP/TestPHP, IBM Altoro
+Mutual) and local Docker labs (the built-in Apache CVE lab, OWASP Juice Shop, DVWA) that Cerberus knows
+about, annotated with whether the caller has already added and verified each one.
+
+```json
+{
+  "total": 6,
+  "testbeds": [
+    {
+      "id": "apache-lab", "name": "Cerberus Apache 2.4.49/50 Lab", "category": "docker",
+      "domain": "127.0.0.1", "url": "http://127.0.0.1:18081", "ports": [18081, 18082],
+      "docker_command": "docker compose -f lab/docker-compose.yml up -d",
+      "docker_teardown": "docker compose -f lab/docker-compose.yml down",
+      "description": "…", "vulnerabilities": ["CVE-2021-41773 …"], "tags": ["Docker Lab", "CISA KEV"],
+      "provider_disclaimer": "Controlled repeatable Docker testbed bound to 127.0.0.1.",
+      "already_added": false, "domain_id": null
+    }
+  ]
+}
+```
+
+The list itself (`SANCTIONED_TESTBEDS` in `api/domains.py`) is a hardcoded allowlist, not something a
+client can extend: no domain outside it can be added through this endpoint.
+
+---
+
+### `POST /api/v1/domains/testbeds/{id}`
+
+Add one of the testbeds above as an **immediately verified** target — no DNS record, no connected
+platform account. `{id}` is one of the ids this endpoint's `GET` lists (`apache-lab`, `juice-shop`,
+`dvwa`, `testasp`, `testphp`, `demo-testfire`); anything else is `404 not_found`.
+
+**Response — `200 OK`:** the domain, already `verification_status: "verified"` and
+`verification_method: "testbed"`.
+
+**Security note, stated plainly:** this is the one path in the API where "verified" does not mean DNS or
+platform-account proof — it means *the operator shipped this address on a fixed allowlist*. For the three
+Docker labs, the domain is `127.0.0.1`, and `core/pipeline.py` grants that one scan `allow_loopback_only`
+(`core/scope.py`): the exact loopback addresses only, never the RFC1918 ranges or the cloud metadata
+address a blanket private-address allowance would also open. That any signed-in user can reach this
+server's own loopback interface at all is intentional for a single-operator install (you are the only
+"any signed-in user"), and worth gating on a shared deployment — see
+[DEPLOYMENT.md §5](DEPLOYMENT.md#5-scanning-from-the-deployed-api).
+
+Errors: `404 not_found` (unknown testbed id), `400 domain_limit` (25 domains per account),
+`409 domain_exists` (a race against a concurrent request for the same testbed).
+
+---
+
 ### `POST /api/v1/scans`
 
 Run the discovery → enrichment → scoring pipeline against a domain **you have verified**.
@@ -396,7 +447,33 @@ There is deliberately **no** `authorized` field. A caller asserting "I am author
 of anything; the evidence is the verified domain, checked server-side on every request
 (`core/ownership.py`). Nor is there a field to permit private or loopback addresses: that is
 operator-level configuration (`discovery.allow_private_addresses`), because a caller who could set it
-could aim the server at its own internal network.
+could aim the server at its own internal network. The one exception is a Test Labs target
+(`verification_method` `testbed`/`lab`), always exactly `127.0.0.1`/`localhost`/`::1`, for which the
+pipeline grants only the exact loopback address (`core/scope.py`'s `allow_loopback_only`) — never the
+RFC1918 ranges or the cloud metadata address a caller-supplied flag would risk.
+
+**Real per-stage progress.** While a scan runs, `GET /api/v1/scans/{id}` and `GET /api/v1/scans` (in
+each row) carry a `progress` object, updated as each real pipeline stage genuinely finishes - never a
+timer, never a guess:
+
+```json
+{
+  "progress": {
+    "stages": ["authorization", "asset_discovery", "dns_resolution", "port_service_discovery",
+               "http_discovery", "vulnerability_scan", "enrichment", "risk_analysis", "report"],
+    "completed": ["authorization", "asset_discovery", "dns_resolution", "port_service_discovery"],
+    "current": "http_discovery",
+    "counts": {"subdomains": 1, "hosts_resolved": 1, "open_ports": 2}
+  }
+}
+```
+
+`progress` is `null` for a scan the background task has not written anything for yet - never a
+fabricated 0%. A stage absent from `completed` once the scan has finished (`status: "completed"`)
+simply never ran for that profile (a `passive` scan stops after `dns_resolution`); it is never invented
+to make the checklist look busier than the scan actually was. See `core/pipeline.py`'s `SCAN_STAGES`
+and `_record_stage`, and `discovery/runner.py`'s `on_stage` callback, which is the only thing allowed
+to report a stage done.
 
 Errors: `404 not_found` (no such domain **or** it is not yours), `403 domain_not_verified`,
 `409 scan_in_progress` (one scan at a time per account), `400 invalid_profile`.
@@ -627,9 +704,33 @@ Full detail for a single finding, including enrichment source data.
   "detection_method": "active_detection",
   "detected_by_tool": "nuclei",
   "evidence": "Detected by nuclei template 'CVE-2021-41773' (high severity) matching at http://api.example.com:443/cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd. This is detection evidence that the weakness is present and reachable, not evidence of compromise.",
-  "detected_at": "2026-09-13T10:04:00Z"
+  "detected_at": "2026-09-13T10:04:00Z",
+  "explanation": {
+    "what_we_found": "Your server at api.example.com:443 is running Apache httpd/2.4.49, which is affected by CVE-2021-41773, a known security vulnerability.",
+    "what_is_the_problem": "A flaw in Apache HTTP Server 2.4.49 allows path traversal...",
+    "why_it_matters": "This system is reachable from the internet, so anyone can attempt to use this weakness. CISA's Known Exploited Vulnerabilities catalog lists this as being actively used by attackers right now, not just theoretically possible.",
+    "how_it_was_detected": {
+      "host": "api.example.com", "port": 443, "technology": "Apache httpd/2.4.49",
+      "detection_method": "active_detection", "detected_by_tool": "nuclei"
+    },
+    "how_serious": {
+      "risk_score": 89.6, "cvss_score": 9.8, "epss_score": 0.99992,
+      "kev_listed": true, "asset_criticality": "high"
+    },
+    "why_this_priority": "Actively exploited (CISA KEV, added 2021-11-03); 100% predicted exploitation probability (EPSS); high-criticality asset (hostname indicates a production or data-tier system); internet-facing web service on port 443, critical severity (CVSS 9.8).",
+    "what_to_do": "Update Apache httpd beyond the version currently detected (Apache httpd/2.4.49). Cerberus does not store a confirmed patched-version number - check the vendor's own release notes or security advisories for CVE-2021-41773 to find the exact version that fixes it, then apply it.",
+    "how_to_verify": "Apply the fix, then start a new scan of this target. If this finding no longer appears in your ranked list, it worked. If it still appears, confirm the update was actually installed and that the affected service was restarted."
+  }
 }
 ```
+
+`explanation` answers the question a developer actually asks, in order, before the raw CVE/CVSS/CPE
+numbers (those stay in the response too, for anyone who wants them). It is **computed at read time from
+data already stored on the finding** (`scoring/explain.py`), not a model and not a new column: the same
+`reasoning` sentence shown elsewhere powers `why_this_priority` directly, so there is only ever one
+explanation of why a finding ranks where it does. `what_to_do` never invents a patched-version number -
+NVD's affected-version ranges are queried live and not stored (see [code.md](code.md)), so the only
+honest remediation fact Cerberus has is the technology string it actually detected.
 
 ---
 
@@ -905,6 +1006,7 @@ DNS-verified targets skip all of this.
 | 400 | `too_many_connections` | 10 connections per account. Disconnect one. |
 | 400 | `invalid_token` | A pasted access token was malformed or not accepted by the platform. |
 | 400 | `not_supported` | That provider has no access-token option. |
+| 400 | `invalid_team_id` | The `team_id` sent with a pasted token is not shaped like `team_` + letters/digits. Distinct from `invalid_token`: nothing was sent to the platform, and it does not count toward the 10/hour wrong-token limit. |
 | 400 | `not_a_platform_hostname` | Not a `*.vercel.app` / `*.netlify.app` / `*.pages.dev` address. Use DNS. |
 | 400 | `invalid_domain` | The hostname is not a valid bare domain. |
 | 403 | `ownership_not_proven` | The platform does not show that hostname on a project this account controls. |
@@ -955,11 +1057,101 @@ a hostname**, and those targets cannot be scanned until verified again. Cerberus
 platform to revoke the token; the OAuth app remains authorised on the platform's side until the person
 removes it in the platform's own settings for authorised apps. The dashboard says so.
 
-## 5. Rate Limiting
+## 5. Admin
+
+Read-only, cross-tenant visibility for an account with `is_admin` set. It is a second thing the term
+"admin" could mean in a product like this, deliberately narrower than the other one: **it grants no
+scanning power.** An admin signs in exactly like anyone else, and `POST /scans` has no idea the admin
+flag exists — it is the same `core/ownership.py` check for everyone, so an admin can scan only a domain
+*they themselves* own and verified, same as any other account. There is also no endpoint, here or
+anywhere else, that sets `is_admin`: only an operator with direct database access can
+(`scripts/grant_admin.py`), the same trust boundary as `scripts/claim_legacy.py`.
+
+Every route below requires `is_admin: true` on the caller and is otherwise `404 not_found` — the same
+answer a route that does not exist would give, so a non-admin probing `/api/v1/admin/*` learns nothing
+from the response.
+
+### `GET /api/v1/admin/overview`
+
+Counts across every account, not just the caller's (contrast with `GET /api/v1/overview`).
+
+```json
+{
+  "user_count": 7,
+  "domain_counts": { "verified": 5, "pending": 2 },
+  "scan_counts": { "completed": 6, "running": 1 },
+  "finding_counts": { "critical": 3, "high": 12, "medium": 40, "low": 55, "unscored": 0 }
+}
+```
+
+`finding_counts` is open findings only (`status = "open"`), by risk band.
+
+---
+
+### `GET /api/v1/admin/users`
+
+Paginated (`limit`, `offset`, as elsewhere). Every account, newest first.
+
+```json
+{
+  "total": 7,
+  "users": [
+    { "id": "…", "email": "alice@example.com", "name": "Alice", "is_admin": false,
+      "created_at": "…", "last_login_at": "…", "domain_count": 2, "scan_count": 5 }
+  ]
+}
+```
+
+---
+
+### `GET /api/v1/admin/domains`
+
+Every account's targets, each with its owner's email.
+
+```json
+{
+  "total": 12,
+  "domains": [
+    { "id": "…", "domain": "alice.example.com", "owner_email": "alice@example.com",
+      "verification_status": "verified", "verification_method": "dns_txt", "created_at": "…" }
+  ]
+}
+```
+
+---
+
+### `GET /api/v1/admin/scans`
+
+Every account's scans, each with its owner's email and how many findings it produced.
+`owner_email` is `null` for a scan that predates accounts (see `scripts/claim_legacy.py`) —
+never invented.
+
+```json
+{
+  "total": 40,
+  "scans": [
+    { "scan_id": "…", "owner_email": "bob@example.com", "target_domain": "bob.example.com",
+      "profile": "safe", "status": "completed", "started_at": "…", "completed_at": "…",
+      "finding_count": 9 }
+  ]
+}
+```
+
+### Granting admin
+
+```bash
+python scripts/grant_admin.py you@example.com            # grant
+python scripts/grant_admin.py you@example.com --revoke    # revoke
+```
+
+An operator-only script, deliberately: it needs the same direct database access as
+`scripts/claim_legacy.py`, and there is no API path to the same effect.
+
+## 6. Rate Limiting
 
 There is no general per-client rate limit (single-operator use, per [PRD §3](PRD.md#3-non-goals-v1)). Sign-in and registration are limited per account and per address, DNS verification to 30/hour per account, and provider calls to 60/hour per account (§4.3). `POST /api/v1/scans` is serialized server-side — only one scan runs per tenant at a time — to avoid overlapping active reconnaissance against the same target.
 
-## 6. Error Format
+## 7. Error Format
 
 ```json
 {

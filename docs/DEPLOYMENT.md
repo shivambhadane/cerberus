@@ -119,9 +119,17 @@ remove that `ports:` entry entirely, since the API reaches Postgres over the com
   do not start an API while a CLI scan against the same database is still running, or that
   scan will be marked failed.
 - Only one scan runs per tenant at a time (`409 scan_in_progress` otherwise).
-- Loopback and private addresses are refused, and the API has no parameter to allow them. That is a
-  deliberate defence against pointing the server at its own network. To scan a private lab, use the
-  CLI with `--allow-private` (see [lab/README.md](../lab/README.md)).
+- Loopback and private addresses are refused by default (`core/scope.py`), which is a deliberate
+  defence against pointing the server at its own network. The CLI's own `--allow-private` flag is an
+  explicit operator opt-in for scanning a private lab (see [lab/README.md](../lab/README.md)).
+  **Exception:** the dashboard's Test Labs screen (`POST /api/v1/domains/testbeds/{id}`) lets any
+  signed-in user add `127.0.0.1` as a verified target. For that one scan, `core/scope.py`'s
+  `allow_loopback_only` grants the *exact* loopback addresses only (`127.0.0.1`, `::1`) — never the
+  RFC1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and never the cloud metadata address
+  (`169.254.169.254`), which a blanket "allow private addresses" would also have opened. This was
+  tightened from an earlier, broader grant; see `tests/test_scope.py` for the boundary it now enforces.
+  It remains true that any signed-in user can scan this server's own loopback interface, which is fine
+  on a single-operator laptop and worth gating before a multi-user deployment.
 - Scan only what you are authorized to. See [RULES_OF_ENGAGEMENT.md](RULES_OF_ENGAGEMENT.md).
 
 ## 6. Operating it
@@ -258,7 +266,13 @@ Vercel can be connected with an **access token** instead. This needs **no `VERCE
 Trade-offs, stated plainly: Vercel has no read-only token, so this one can do everything its owner can within the scope
 you chose, which is more than Cerberus needs (it only reads project names and addresses). It is stored encrypted, is never
 shown again, and disappears from Cerberus when you disconnect. Delete it on Vercel when you are done. When it expires,
-Cerberus asks for a new one (targets it verified stay verified). It has not been tried against a live Vercel account.
+Cerberus asks for a new one (targets it verified stay verified).
+
+This path has been exercised against a live Vercel account: a real token listed the account's projects and
+verified a `*.vercel.app` address. One thing that surprised us is worth repeating here — when the token later
+expired, the connection's status became `failed` rather than staying `connected`. That is the scan-time
+re-check working as designed, not a regression: ownership is proven again at scan time, so a target whose
+evidence can no longer be re-established stops counting as verified.
 
 ### 7.4 Netlify
 
@@ -270,7 +284,10 @@ Cerberus asks for a new one (targets it verified stay verified). It has not been
    so, but the person should also revoke the app in their Netlify settings when done.
 5. Netlify's public reference documents the implicit grant; the authorization-code token endpoint
    Cerberus uses is not in it. If the first connection fails with `authorization_failed`, this is the
-   likely reason.
+   likely reason — in practice the authorization-code flow did work.
+
+This is the provider that has been end-to-end verified against a live account: a real Netlify OAuth
+connection listed the account's sites and verified a `*.netlify.app` address.
 
 ### 7.5 Cloudflare Pages
 
@@ -278,12 +295,30 @@ Cloudflare's OAuth is self-managed: authorization code with PKCE, refresh tokens
 
 1. In the Cloudflare dashboard create an **OAuth client** for your account (see Cloudflare's *Create an
    OAuth client* documentation): a confidential (web) client, with the redirect URI from §7.2.
-2. **Scopes.** Choose the read-only scopes that let the client list accounts and read Pages projects.
-   Cloudflare does not publish the Pages scope's identifier in its public docs; the current list comes
-   from its authenticated endpoint `GET /client/v4/oauth/scopes`. Put the exact identifiers, space-separated,
-   in `CLOUDFLARE_OAUTH_SCOPES`. Cerberus adds `openid` (to learn the account's id) and `offline_access`
-   (for a refresh token) itself. Until the variable is set the provider shows as not set up.
+2. **Scopes.** Choose the read-only scopes that let the client list accounts and read Pages projects,
+   and put the exact identifiers, space-separated, in `CLOUDFLARE_OAUTH_SCOPES`. Until the variable is
+   set the provider shows as not set up.
+
+   The one you cannot do without is **`pages.metadata_read`** — that is the read-only Pages scope, and
+   Cloudflare does not publish its identifier in the public docs (the full list is served by the
+   authenticated `GET /client/v4/oauth/scopes`), so it is recorded here. `account-settings.read` is the
+   useful companion, for listing the accounts a project could belong to.
+
+   Cerberus appends **`offline_access`** itself, to get a refresh token. It does *not* send `openid`:
+   despite the OIDC discovery document, Cloudflare's OAuth does not use it, and the account id comes
+   from `GET /client/v4/accounts` instead.
 3. Copy the client id and secret into `CLOUDFLARE_CLIENT_ID` and `CLOUDFLARE_CLIENT_SECRET`.
+
+**Verified live.** A Cloudflare account has been connected through this flow and 8 Pages projects were
+listed and verified from it. Cloudflare is in fact the most complete of the three adapters: it is the only
+one that receives a **refresh token** (via `offline_access`), so its access token — which Cloudflare issues
+with a one-hour lifetime — can be renewed rather than needing a reconnect.
+
+Getting there was the awkward part, so for anyone repeating it: the *Create an OAuth client* form may
+refuse to enable **Continue** without showing a field-level error, and an API token created as a workaround
+can verify itself (`/user/tokens/verify` → active) while still being refused for `GET /accounts` (403, code
+9109) and `GET /oauth/scopes` (401, code 10000). The scope identifiers in step 2 are what unblock it, and
+`pages.metadata_read` is the one that matters.
 
 ### 7.6 Checking it
 

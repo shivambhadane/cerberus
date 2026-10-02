@@ -80,6 +80,119 @@ def test_fresh_cache_produces_no_warning(session):
     assert cache_warning(session, max_age_hours=24) is None
 
 
+# --- scan progress: core.pipeline._record_stage ---------------------------------------------
+
+class _OneSession:
+    """Wraps a real test session as the context manager session_scope() returns, so
+    _record_stage's own `with session_scope() as session:` reaches the fixture's data."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, *_args):
+        return False
+
+
+def _patched_session_scope(session, monkeypatch):
+    monkeypatch.setattr("core.pipeline.session_scope", lambda: _OneSession(session))
+
+
+def test_record_stage_marks_the_stage_done_and_points_current_at_the_next_one(session, monkeypatch):
+    from core.models import Scan, Tenant
+    from core.pipeline import SCAN_STAGES, _record_stage
+
+    _patched_session_scope(session, monkeypatch)
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    scan = Scan(tenant_id=tenant.id, target_domain="example.com", status="discovering")
+    session.add(scan)
+    session.flush()
+
+    _record_stage(scan.id, "asset_discovery", {"subdomains": 3})
+
+    progress = session.get(Scan, scan.id).progress
+    assert progress["completed"] == ["asset_discovery"]
+    assert progress["current"] == "dns_resolution"
+    assert progress["counts"] == {"subdomains": 3}
+    assert progress["stages"] == list(SCAN_STAGES)
+
+
+def test_record_stage_counts_accumulate_and_never_go_backwards(session, monkeypatch):
+    from core.models import Scan, Tenant
+    from core.pipeline import _record_stage
+
+    _patched_session_scope(session, monkeypatch)
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    scan = Scan(tenant_id=tenant.id, target_domain="example.com", status="discovering")
+    session.add(scan)
+    session.flush()
+
+    _record_stage(scan.id, "asset_discovery", {"subdomains": 3})
+    _record_stage(scan.id, "dns_resolution", {"hosts_resolved": 2})
+
+    progress = session.get(Scan, scan.id).progress
+    assert progress["completed"] == ["asset_discovery", "dns_resolution"]
+    assert progress["counts"] == {"subdomains": 3, "hosts_resolved": 2}  # the first stage's count survives
+    assert progress["current"] == "port_service_discovery"
+
+
+def test_record_stage_is_idempotent(session, monkeypatch):
+    """A stage reported twice (should never happen, but must not corrupt the list) does not
+    duplicate itself or move `current` backwards."""
+    from core.models import Scan, Tenant
+    from core.pipeline import _record_stage
+
+    _patched_session_scope(session, monkeypatch)
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    scan = Scan(tenant_id=tenant.id, target_domain="example.com", status="discovering")
+    session.add(scan)
+    session.flush()
+
+    _record_stage(scan.id, "asset_discovery", {"subdomains": 1})
+    _record_stage(scan.id, "asset_discovery", {"subdomains": 1})
+
+    progress = session.get(Scan, scan.id).progress
+    assert progress["completed"] == ["asset_discovery"]
+    assert progress["current"] == "dns_resolution"
+
+
+def test_record_stage_on_the_last_stage_sets_current_to_none(session, monkeypatch):
+    from core.models import Scan, Tenant
+    from core.pipeline import SCAN_STAGES, _record_stage
+
+    _patched_session_scope(session, monkeypatch)
+    tenant = Tenant(name="t")
+    session.add(tenant)
+    session.flush()
+    scan = Scan(tenant_id=tenant.id, target_domain="example.com", status="discovering")
+    session.add(scan)
+    session.flush()
+
+    for stage in SCAN_STAGES:
+        _record_stage(scan.id, stage)
+
+    progress = session.get(Scan, scan.id).progress
+    assert progress["current"] is None
+    assert progress["completed"] == list(SCAN_STAGES)
+
+
+def test_record_stage_does_nothing_for_a_scan_that_no_longer_exists(session, monkeypatch):
+    """A background task racing a deleted scan row must not raise - there is simply nothing
+    left to record progress on."""
+    from core.pipeline import _record_stage
+
+    _patched_session_scope(session, monkeypatch)
+    _record_stage("does-not-exist", "asset_discovery", {"subdomains": 1})  # must not raise
+
+
 # --- scans orphaned by a restart -------------------------------------------------------------
 
 def test_scans_left_active_by_a_restart_are_failed_not_left_blocking(session):

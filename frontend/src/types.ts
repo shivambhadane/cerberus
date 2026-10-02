@@ -15,6 +15,35 @@ export interface Finding {
   detected_at: string;
 }
 
+export interface FindingDetection {
+  host: string;
+  port: number;
+  technology: string | null;
+  detection_method: string;
+  detected_by_tool: string | null;
+}
+
+export interface FindingSeverity {
+  risk_score: number | null;
+  cvss_score: number | null;
+  epss_score: number | null;
+  kev_listed: boolean;
+  asset_criticality: string | null;
+}
+
+/** A developer-friendly reading of the same finding, in the order a developer asks the
+ * questions. Deterministic, built from stored data only - see scoring/explain.py. */
+export interface FindingExplanation {
+  what_we_found: string;
+  what_is_the_problem: string;
+  why_it_matters: string;
+  how_it_was_detected: FindingDetection;
+  how_serious: FindingSeverity;
+  why_this_priority: string | null;
+  what_to_do: string;
+  how_to_verify: string;
+}
+
 export interface FindingDetail extends Omit<Finding, "asset"> {
   asset: { id: string; hostname: string; port: number };
   asset_criticality_source: "heuristic" | "manual" | null;
@@ -23,6 +52,7 @@ export interface FindingDetail extends Omit<Finding, "asset"> {
   has_public_exploit: boolean;
   description: string | null;
   evidence: string | null;
+  explanation: FindingExplanation;
 }
 
 export type Criticality = "low" | "medium" | "high" | "critical";
@@ -60,6 +90,13 @@ export interface Observation {
   observed_at: string;
 }
 
+export interface ScanProgress {
+  stages: string[];
+  completed: string[];
+  current: string | null;
+  counts: Record<string, number>;
+}
+
 export interface Scan {
   scan_id: string;
   target_domain: string;
@@ -70,6 +107,8 @@ export interface Scan {
   error: string | null;
   warnings: string[];
   observation_count?: number;
+  /** Real per-stage progress; absent for a scan the backend has not written any for yet. */
+  progress?: ScanProgress | null;
 }
 
 export interface Page<T> {
@@ -114,6 +153,64 @@ export interface User {
   picture_url?: string | null;
   /** How the person signed in: "google.com", "github.com" or "password". */
   auth_provider?: string | null;
+  /** Read-only visibility into every account's domains, scans and findings (Admin tab). Never
+   * settable through any API: only an operator with database access grants it. */
+  is_admin?: boolean;
+}
+
+// --- admin: read-only cross-tenant visibility --------------------------------------------------
+
+export interface AdminOverview {
+  user_count: number;
+  domain_counts: Record<string, number>;
+  scan_counts: Record<string, number>;
+  finding_counts: Record<string, number>;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  created_at: string;
+  last_login_at: string | null;
+  domain_count: number;
+  scan_count: number;
+}
+
+export interface AdminUserList {
+  total: number;
+  users: AdminUser[];
+}
+
+export interface AdminDomain {
+  id: string;
+  domain: string;
+  owner_email: string;
+  verification_status: string;
+  verification_method: string;
+  created_at: string;
+}
+
+export interface AdminDomainList {
+  total: number;
+  domains: AdminDomain[];
+}
+
+export interface AdminScan {
+  scan_id: string;
+  owner_email: string | null;
+  target_domain: string;
+  profile: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  finding_count: number;
+}
+
+export interface AdminScanList {
+  total: number;
+  scans: AdminScan[];
 }
 
 export interface AuthResult {

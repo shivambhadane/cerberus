@@ -11,6 +11,7 @@ import {
 import { formatDate } from "../lib/format";
 import { useApi } from "../lib/useApi";
 import type { Connection, Domain, PlatformProject, ProviderInfo } from "../types";
+import { Icon } from "./icons";
 import { Badge, Banner, EmptyState, ErrorBanner, SkeletonRows } from "./ui";
 
 /** The address each platform gives an app for free: the only kind a platform account can prove. */
@@ -23,21 +24,88 @@ export const PLATFORM_ADDRESS: Record<string, string> = {
 /** Plain-language hints shown on a provider's card, where the provider has a limit worth knowing. */
 const PROVIDER_NOTES: Record<string, string> = {
   netlify:
-    "Netlify has no read-only access level. Cerberus only reads your site list, but the token Netlify issues can do more than that.",
-};
-
-/** Where to make an access token, and what to warn about, for the providers that accept one. */
-const TOKEN_HELP: Record<string, { where: string; warning: string; team: string }> = {
-  vercel: {
-    where:
-      "In Vercel open Account Settings → Tokens → Create Token. Limit its scope to the team that owns the app and give it a short expiry.",
-    warning:
-      "Vercel has no read-only token, so this one can do more than Cerberus needs. Cerberus only reads project names and addresses, keeps the token encrypted on the server, and never shows it again. Delete the token on Vercel when you are done.",
-    team: "Only if the token is limited to a team: Team Settings → General → Team ID (it starts with team_). Leave it empty for a personal account.",
-  },
+    "Netlify issues account-wide tokens. Cerberus only reads your site list and verifies ownership of *.netlify.app domains.",
+  cloudflare:
+    "Cerberus uses Cloudflare Pages scopes (page.read, pages.metadata_read) to list and verify your *.pages.dev projects.",
+  vercel:
+    "Vercel tokens are stored encrypted using server-side AES-256-GCM and used strictly for project listing and hostname verification.",
 };
 
 const message = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
+
+/** Educational guidance card showing regular users how deployment verification works. */
+function DeploymentHowItWorks() {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="deployment-guide-card">
+      <div className="guide-header">
+        <div className="guide-title">
+          <Icon name="info" />
+          <span>How Platform Deployment Verification Works</span>
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+        >
+          {expanded ? "Hide guide" : "Show guide"}
+        </button>
+      </div>
+
+      {expanded && (
+        <>
+          <p className="deployment-intro">
+            Connect your hosting account once to verify free deployment subdomains (<code>*.vercel.app</code>,{" "}
+            <code>*.netlify.app</code>, and <code>*.pages.dev</code>) in one click without configuring manual DNS TXT records.
+          </p>
+
+          <div className="guide-steps-grid">
+            <div className="guide-step">
+              <div className="guide-step-heading">
+                <span className="guide-step-pill">1</span>
+                <span>Connect Account</span>
+              </div>
+              <p className="guide-step-body">
+                <strong>Netlify &amp; Cloudflare:</strong> 1-click OAuth sign-in.<br />
+                <strong>Vercel:</strong> 10-second personal access token from Vercel Account Settings.
+              </p>
+            </div>
+
+            <div className="guide-step">
+              <div className="guide-step-heading">
+                <span className="guide-step-pill">2</span>
+                <span>Discover Projects</span>
+              </div>
+              <p className="guide-step-body">
+                Cerberus queries the provider&apos;s API to list live deployment projects and active subdomains belonging to you.
+              </p>
+            </div>
+
+            <div className="guide-step">
+              <div className="guide-step-heading">
+                <span className="guide-step-pill">3</span>
+                <span>Verify &amp; Scan</span>
+              </div>
+              <p className="guide-step-body">
+                Click <strong>Add &amp; verify</strong> on any project address. The domain is instantly verified and ready for scanning!
+              </p>
+            </div>
+          </div>
+
+          <div className="guide-security-footnote">
+            <Icon name="lock" />
+            <span>
+              <strong>Zero credential exposure:</strong> Provider tokens are encrypted on the server with AES-256-GCM.
+              They are never sent to your browser or exposed in logs.
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** Only ever send the browser to the provider over HTTPS, whatever the API said. */
 function goToProvider(url: string) {
@@ -107,24 +175,25 @@ function TokenForm({
   info,
   renewing,
   onConnected,
+  onCancel,
 }: {
   info: ProviderInfo;
   renewing: boolean;
   onConnected: (connection: Connection) => void;
+  onCancel?: () => void;
 }) {
   const tokenId = useId();
   const teamId = useId();
-  const hintId = useId();
-  const help = TOKEN_HELP[info.provider];
   const [token, setToken] = useState("");
   const [team, setTeam] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!token.trim()) {
-      setError("Paste your access token first.");
+      setError("Please paste your access token first.");
       return;
     }
     setBusy(true);
@@ -141,26 +210,74 @@ function TokenForm({
   }
 
   return (
-    <form className="token-form stack" onSubmit={(e) => void submit(e)} noValidate>
-      {help && <p className="field-hint">{help.where}</p>}
+    <form className="token-form-container stack" onSubmit={(e) => void submit(e)} noValidate>
+      <div className="token-guidance-box">
+        <div className="token-guidance-title">
+          <span>How to create a {info.label} Access Token</span>
+          <a
+            href="https://vercel.com/account/tokens"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost btn-sm"
+          >
+            <Icon name="external" />
+            <span>Open Vercel Tokens</span>
+          </a>
+        </div>
+        <ol className="token-steps-list">
+          <li className="token-step-item">
+            <span className="token-step-num">1</span>
+            <span>
+              Go to{" "}
+              <a href="https://vercel.com/account/tokens" target="_blank" rel="noopener noreferrer">
+                vercel.com/account/tokens
+              </a>{" "}
+              in your browser.
+            </span>
+          </li>
+          <li className="token-step-item">
+            <span className="token-step-num">2</span>
+            <span>
+              Click <strong>Create Token</strong>, enter a name (e.g. <code>Cerberus Scanner</code>), and select your desired expiration.
+            </span>
+          </li>
+          <li className="token-step-item">
+            <span className="token-step-num">3</span>
+            <span>Copy the generated token, paste it below, and click Connect.</span>
+          </li>
+        </ol>
+      </div>
+
       <div className="field">
         <label className="field-label" htmlFor={tokenId}>
-          {info.label} access token
+          {info.label} Access Token
         </label>
-        <input
-          id={tokenId}
-          className="input mono"
-          type="password"
-          name="access-token"
-          value={token}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          aria-describedby={hintId}
-          onChange={(e) => setToken(e.target.value)}
-        />
+        <div className="input-with-button">
+          <input
+            id={tokenId}
+            className="input mono"
+            type={showToken ? "text" : "password"}
+            name="access-token"
+            value={token}
+            placeholder="e.g. 7X89k..."
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <button
+            type="button"
+            className="input-action-btn"
+            onClick={() => setShowToken((prev) => !prev)}
+            title={showToken ? "Hide token" : "Show token"}
+            aria-label={showToken ? "Hide token" : "Show token"}
+          >
+            <Icon name={showToken ? "eyeOff" : "eye"} />
+          </button>
+        </div>
       </div>
+
       <div className="field">
         <label className="field-label" htmlFor={teamId}>
           Team ID <span className="muted">(optional)</span>
@@ -169,27 +286,38 @@ function TokenForm({
           id={teamId}
           className="input mono"
           value={team}
-          placeholder="team_…"
+          placeholder="team_… (leave empty for personal account)"
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => setTeam(e.target.value)}
         />
-        {help && <span className="field-hint">{help.team}</span>}
+        <span className="field-hint">
+          Only required if your deployments belong to a Vercel Team (found in Vercel Team Settings → General).
+        </span>
       </div>
-      {help && (
-        <p id={hintId} className="field-hint">
-          {help.warning}
-        </p>
-      )}
+
+      <div className="token-security-badge">
+        <Icon name="lock" />
+        <span>
+          Stored encrypted with AES-256-GCM. Used strictly to read project names and addresses.
+        </span>
+      </div>
+
       {error && (
         <p role="alert" className="form-error">
           {error}
         </p>
       )}
+
       <div className="cluster">
         <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
-          {busy ? "Checking…" : renewing ? "Replace token" : "Connect with token"}
+          {busy ? "Verifying Token…" : renewing ? "Replace Token" : "Connect Account"}
         </button>
+        {onCancel && (
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </div>
     </form>
   );
@@ -233,9 +361,11 @@ function ProjectRow({
             const added = project.verified_hostnames.includes(host);
             return (
               <li key={host} className="host-row">
-                <code>{host}</code>
+                <span className="host-domain-badge">{host}</span>
                 {added ? (
-                  <Badge tone="success">Added and verified</Badge>
+                  <Badge tone="success">
+                    <Icon name="check" /> Added &amp; verified
+                  </Badge>
                 ) : (
                   <button
                     type="button"
@@ -271,22 +401,22 @@ function ProjectPicker({
   onReconnect: () => void;
 }) {
   const byToken = connection.method === "token";
-  const id = useId();
-  const { data, error, loading, reload } = useApi((signal) => listConnectionProjects(connection.id, signal), [
-    connection.id,
-  ]);
+  const { data, error, loading, reload } = useApi(
+    (signal) => listConnectionProjects(connection.id, signal),
+    [connection.id],
+  );
   const [filter, setFilter] = useState("");
 
   const needle = filter.trim().toLowerCase();
-  const projects = (data?.projects ?? []).filter(
+  const allProjects = data?.projects ?? [];
+  const projects = allProjects.filter(
     (p) => !needle || p.name.toLowerCase().includes(needle) || p.hostnames.some((h) => h.includes(needle)),
   );
 
   if (error?.code === "connection_expired") {
     return (
       <Banner tone="warning" role="alert">
-        <strong>This connection needs to be renewed.</strong>
-        {error.message}
+        <strong>This connection needs to be renewed.</strong> {error.message}
         <div className="banner-actions">
           <button type="button" className="btn btn-primary btn-sm" onClick={onReconnect}>
             {byToken ? "Enter a new token" : "Reconnect"}
@@ -300,27 +430,49 @@ function ProjectPicker({
     <div className="stack picker">
       {error && <ErrorBanner error={error} onRetry={reload} />}
       {!data && loading && <SkeletonRows rows={3} />}
-      {data && data.projects.length === 0 && (
-        <EmptyState level={3} title="No projects found">
-          This account has no projects Cerberus can see. If you expected some, disconnect and connect again, and
-          make sure to share the projects when the platform asks.
-        </EmptyState>
-      )}
-      {data && data.projects.length > 8 && (
-        <div className="field">
-          <label className="field-label" htmlFor={id}>Filter projects</label>
-          <input
-            id={id}
-            className="input"
-            value={filter}
-            placeholder="Project or address"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+
+      {data && allProjects.length > 0 && (
+        <div className="picker-topbar">
+          <div className="picker-search-wrap">
+            <span className="picker-search-icon" aria-hidden="true">
+              <Icon name="search" />
+            </span>
+            <input
+              className="input picker-search-input"
+              value={filter}
+              placeholder="Search projects or hostnames..."
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setFilter(e.target.value)}
+              aria-label="Filter projects"
+            />
+          </div>
+          <div className="cluster">
+            <span className="picker-stats">
+              {needle ? `Showing ${projects.length} of ${allProjects.length}` : `${allProjects.length} project${allProjects.length === 1 ? "" : "s"}`}
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={loading}
+              onClick={() => reload()}
+              title="Refresh project list from provider"
+            >
+              <Icon name="refresh" />
+              <span>Sync</span>
+            </button>
+          </div>
         </div>
       )}
-      {data && data.projects.length > 0 && (
+
+      {data && allProjects.length === 0 && (
+        <EmptyState level={3} title="No projects found">
+          This account has no projects Cerberus can see. If you have projects deployed, make sure to grant project
+          access during authorization or check your token permissions.
+        </EmptyState>
+      )}
+
+      {data && allProjects.length > 0 && (
         <ul className="plain-list project-list" role="list" aria-label={`Projects in ${connection.label}`}>
           {projects.map((project) => (
             <ProjectRow
@@ -333,7 +485,11 @@ function ProjectPicker({
               }}
             />
           ))}
-          {projects.length === 0 && <li className="muted">No project matches “{filter}”.</li>}
+          {projects.length === 0 && (
+            <li className="muted" style={{ padding: "var(--space-2) 0" }}>
+              No project matches “{filter}”.
+            </li>
+          )}
         </ul>
       )}
     </div>
@@ -368,7 +524,6 @@ function ConnectionRow({
   }, [startOpen]);
 
   async function reconnect() {
-    // A token connection is renewed by pasting a new token, not by sending the person to the platform.
     if (connection.method === "token") {
       onRenewToken();
       return;
@@ -398,14 +553,19 @@ function ConnectionRow({
   return (
     <li className="connection">
       <div className="connection-row">
-        <span className="connection-name">
-          <strong>{connection.label}</strong>
-          <span className="muted">
+        <div className="connection-name">
+          <div className="connection-title-row">
+            <strong>{connection.label}</strong>
+            <span className="connection-method-pill">
+              {connection.method === "token" ? "Personal Token" : "OAuth"}
+            </span>
+          </div>
+          <span className="connection-meta">
             Connected {formatDate(connection.connected_at)}
-            {connection.method === "token" ? " with an access token" : ""}
           </span>
-        </span>
-        <span className="cluster">
+        </div>
+
+        <div className="cluster">
           <button
             type="button"
             className="btn btn-sm"
@@ -413,31 +573,50 @@ function ConnectionRow({
             aria-controls={panelId}
             onClick={() => setOpen((now) => !now)}
           >
-            {open ? "Hide projects" : "Choose a project"}
+            <Icon name={open ? "chevronUp" : "chevronDown"} />
+            <span>{open ? "Hide projects" : "View projects"}</span>
             <span className="sr-only"> for {connection.label}</span>
           </button>
           {confirming ? (
             <>
-              <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => void disconnect()}>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={busy}
+                onClick={() => void disconnect()}
+              >
                 {busy ? "Disconnecting…" : "Confirm disconnect"}
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setConfirming(false)}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={busy}
+                onClick={() => setConfirming(false)}
+              >
                 Cancel
               </button>
             </>
           ) : (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirming(true)}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setConfirming(true)}
+            >
               Disconnect<span className="sr-only"> {connection.label}</span>
             </button>
           )}
-        </span>
+        </div>
       </div>
+
       {confirming && (
-        <p className="field-hint" role="status">
-          Cerberus forgets this connection. Targets it verified go back to “not verified” until you verify them
-          again. Nothing changes on {info.label}; you can also remove the app from {info.label}’s own settings.
-        </p>
+        <div style={{ padding: "0 var(--space-3) var(--space-3)" }}>
+          <p className="field-hint" role="status">
+            Cerberus will forget this connection. Targets it verified will return to “not verified” until
+            verified again. Nothing is altered on {info.label}.
+          </p>
+        </div>
       )}
+
       <div id={panelId} hidden={!open}>
         {open && <ProjectPicker connection={connection} onAdded={onAdded} onReconnect={() => void reconnect()} />}
       </div>
@@ -480,32 +659,34 @@ function ProviderCard({
   }
 
   return (
-    <article className="panel provider-card stack" aria-labelledby={titleId}>
+    <article className={`provider-card provider-card-${info.provider}`} aria-labelledby={titleId}>
       <div className="provider-head">
         <span className={`provider-mark provider-${info.provider}`} aria-hidden="true">
-          <ProviderLogo provider={info.provider} size={22} />
+          <ProviderLogo provider={info.provider} size={24} />
         </span>
         <div className="provider-title">
           <h3 id={titleId}>{info.label}</h3>
-          <span className="field-hint">Verifies {PLATFORM_ADDRESS[info.provider]} addresses</span>
+          <span className="provider-pattern-tag">Verifies {PLATFORM_ADDRESS[info.provider]} addresses</span>
         </div>
         {!usable ? (
-          <Badge tone="warning">Not set up on this server</Badge>
+          <Badge tone="warning">Setup required</Badge>
         ) : connected ? (
-          <Badge tone="success">Connected</Badge>
+          <Badge tone="success">
+            Connected ({info.connections.length})
+          </Badge>
         ) : (
-          <Badge tone="neutral">Not connected</Badge>
+          <Badge tone="neutral">Ready to connect</Badge>
         )}
       </div>
 
       {!usable && (
-        <p className="field-hint">
-          The person running this Cerberus has not registered a {info.label} OAuth app yet, so it can’t be used
-          here. The setup steps are in docs/DEPLOYMENT.md.
+        <p className="provider-desc-note">
+          This deployment provider is not yet configured on this server. Check docs/DEPLOYMENT.md for setup steps.
         </p>
       )}
-      {canOAuth && PROVIDER_NOTES[info.provider] && (
-        <p className="field-hint">{PROVIDER_NOTES[info.provider]}</p>
+
+      {usable && PROVIDER_NOTES[info.provider] && (
+        <p className="provider-desc-note">{PROVIDER_NOTES[info.provider]}</p>
       )}
 
       {connected && (
@@ -545,17 +726,31 @@ function ProviderCard({
               aria-controls={tokenPanelId}
               onClick={() => setTokenOpen((now) => !now)}
             >
-              {tokenOpen ? "Hide access token form" : "Use an access token"}
+              {tokenOpen ? "Hide Token Form" : renewing ? "Replace Access Token" : "Connect with Access Token"}
             </button>
+          )}
+          {info.provider === "vercel" && !tokenOpen && (
+            <a
+              href="https://vercel.com/account/tokens"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-ghost btn-sm"
+              title="Open Vercel Token Settings in a new tab"
+            >
+              <Icon name="external" />
+              <span>Get Token</span>
+            </a>
           )}
         </div>
       )}
+
       {canToken && (
         <div id={tokenPanelId} hidden={!tokenOpen}>
           {tokenOpen && (
             <TokenForm
               info={info}
               renewing={renewing}
+              onCancel={() => setTokenOpen(false)}
               onConnected={(connection) => {
                 setTokenOpen(false);
                 setError(null);
@@ -566,6 +761,7 @@ function ProviderCard({
           )}
         </div>
       )}
+
       {error && (
         <p role="alert" className="form-error">
           {error}
@@ -595,20 +791,18 @@ export function DeploymentPanel({
   return (
     <section className="stack" aria-labelledby="deployment-heading">
       <div className="deployment-head">
-        <h2 id="deployment-heading">Add a deployment</h2>
-        <p className="muted deployment-intro">
-          No custom domain? Connect the account your app is deployed on and Cerberus asks the platform whether
-          the address is yours. Only the free platform addresses, such as <code>*.vercel.app</code>,{" "}
-          <code>*.netlify.app</code> and <code>*.pages.dev</code>, can be verified this way. A custom domain still
-          needs a DNS record. Tokens stay on the server and are never sent to your browser.
-        </p>
+        <h2 id="deployment-heading">Deployment Providers</h2>
+        <DeploymentHowItWorks />
       </div>
+
       {error && <ErrorBanner error={error} onRetry={reload} />}
+
       {!providers && loading && (
         <div className="panel" aria-busy="true">
           <SkeletonRows rows={3} />
         </div>
       )}
+
       <div className="provider-grid">
         {providers?.map((info) => (
           <ProviderCard

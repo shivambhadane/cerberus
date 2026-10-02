@@ -274,3 +274,51 @@ def test_safe_profile_runs_every_stage(monkeypatch):
 
     assert (subdomain.calls, port.calls, vuln.calls) == (1, 1, 1)
     assert [str(e) for e in result.endpoints] == ["api.example.com:443"]
+
+
+def test_on_stage_fires_once_per_real_boundary_in_order_with_true_counts(monkeypatch):
+    """The scan-progress feature (core.pipeline.SCAN_STAGES) is only honest if this callback
+    fires exactly when a stage really finishes, in order, with counts that match what actually
+    ran - never a guess, never early, never twice."""
+    from core.profiles import SAFE
+    from discovery.runner import run_discovery
+
+    _fake_stages(monkeypatch)
+    seen = []
+    run_discovery(
+        Scope(domain="example.com"), SAFE, on_stage=lambda name, counts: seen.append((name, counts))
+    )
+
+    names = [name for name, _ in seen]
+    assert names == [
+        "asset_discovery", "dns_resolution", "port_service_discovery", "http_discovery", "vulnerability_scan",
+    ]
+    by_name = dict(seen)
+    assert by_name["asset_discovery"] == {"subdomains": 1}
+    assert by_name["dns_resolution"] == {"hosts_resolved": 1}
+    assert by_name["port_service_discovery"] == {"open_ports": 1}
+    assert by_name["vulnerability_scan"] == {"detections": 0}  # the fake vuln adapter finds nothing
+
+
+def test_on_stage_never_fires_for_a_stage_that_did_not_run(monkeypatch):
+    """A passive profile stops after DNS resolution: the remaining stages must never be
+    reported as done - that would be exactly the fake progress this feature exists to avoid."""
+    from core.profiles import PASSIVE
+    from discovery.runner import run_discovery
+
+    _fake_stages(monkeypatch)
+    seen = []
+    run_discovery(Scope(domain="example.com"), PASSIVE, on_stage=lambda name, counts: seen.append(name))
+
+    assert seen == ["asset_discovery", "dns_resolution"]
+
+
+def test_on_stage_is_optional_and_changes_nothing_when_omitted(monkeypatch):
+    """Every existing caller that does not pass on_stage must see identical behaviour."""
+    from core.profiles import SAFE
+    from discovery.runner import run_discovery
+
+    subdomain, port, tech, vuln = _fake_stages(monkeypatch)
+    result = run_discovery(Scope(domain="example.com"), SAFE)
+    assert (subdomain.calls, port.calls, vuln.calls) == (1, 1, 1)
+    assert [str(e) for e in result.endpoints] == ["api.example.com:443"]

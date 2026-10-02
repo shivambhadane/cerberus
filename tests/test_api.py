@@ -146,6 +146,39 @@ def test_a_verified_domain_can_be_scanned(client, domains, no_pipeline, session)
     assert (scan.user_id, scan.domain_id) == (client.user.id, domains["mine"].id)
 
 
+def test_a_new_scan_has_no_progress_until_the_pipeline_writes_some(client, domains, no_pipeline):
+    """Never a fabricated 0%: a scan the background task has not touched yet reports no
+    progress at all, not an empty-but-present one."""
+    response = client.post("/api/v1/scans", json={"domain_id": domains["mine"].id})
+    body = client.get(f"/api/v1/scans/{response.json()['scan_id']}").json()
+    assert body["progress"] is None
+
+
+def test_scan_progress_is_exposed_once_the_pipeline_records_it(
+    client, domains, no_pipeline, session, monkeypatch
+):
+    from core.pipeline import _record_stage
+
+    class _OneSession:
+        def __enter__(self): return session
+        def __exit__(self, *_a): return False
+
+    monkeypatch.setattr("core.pipeline.session_scope", lambda: _OneSession())
+
+    response = client.post("/api/v1/scans", json={"domain_id": domains["mine"].id})
+    scan_id = response.json()["scan_id"]
+    _record_stage(scan_id, "asset_discovery", {"subdomains": 2})
+
+    body = client.get(f"/api/v1/scans/{scan_id}").json()
+    assert body["progress"]["completed"] == ["asset_discovery"]
+    assert body["progress"]["current"] == "dns_resolution"
+    assert body["progress"]["counts"] == {"subdomains": 2}
+
+    listing = client.get("/api/v1/scans").json()
+    mine = next(s for s in listing["scans"] if s["scan_id"] == scan_id)
+    assert mine["progress"]["completed"] == ["asset_discovery"]  # the list endpoint carries it too
+
+
 def test_there_is_no_authorised_flag_to_send(client, domains, no_pipeline):
     """The old request ({target_domain, authorized: true}) is gone: a claim is not evidence."""
     old = client.post("/api/v1/scans", json={"target_domain": "example.com", "authorized": True})

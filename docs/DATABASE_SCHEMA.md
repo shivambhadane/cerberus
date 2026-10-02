@@ -208,6 +208,7 @@ A person who signs in. Authentication (passwords, sessions) lives at the API bou
 | `last_login_at` | timestamptz, nullable | |
 | `picture_url` | text, nullable | the sign-in provider's profile photo (a Google photo). An `https` URL only: anything else is dropped before it is stored (`core/profile.py`). Refreshed on each sign-in |
 | `auth_provider` | varchar(32), nullable | how the person signed in: `google.com`, `github.com` or `password`. Read from the provider's verified token, not from the client. `NULL` for accounts that have only used the local password login |
+| `is_admin` | boolean, default `false` | read-only cross-tenant visibility into every account's domains, scans and findings ([API.md §5](API.md#5-admin)). No endpoint sets it; only `scripts/grant_admin.py`, run with direct database access |
 
 `name` is filled from the provider's token only while it is empty, so a name the person chose is never overwritten by the provider's. Both new columns are read from the *verified* token, never from a request body.
 
@@ -235,7 +236,7 @@ A domain a user says they own. It can be scanned only once **verified**.
 | `user_id` | uuid, FK → users.id | the claimant |
 | `domain` | text | stored normalised (`normalize_domain`): lower-case, no scheme, path, port or trailing dot; IP addresses and wildcards are refused |
 | `verification_token` | text | unguessable value the owner publishes to prove control |
-| `verification_method` | text | `dns_txt` (default), `http_file`, or `vercel` \| `netlify` \| `cloudflare` when a connected platform account proved it |
+| `verification_method` | text | `dns_txt` (default), `http_file`, `vercel` \| `netlify` \| `cloudflare` when a connected platform account proved it, or `testbed` when added from the dashboard's Test Labs allowlist (`POST /api/v1/domains/testbeds/{id}`, no DNS or platform proof) |
 | `verification_status` | text | `pending` (default) \| `verified` \| `failed` |
 | `verified_at` | timestamptz, nullable | |
 | `provider` | varchar(16), nullable | `vercel` \| `netlify` \| `cloudflare` when a platform account proved it, else `NULL` |
@@ -248,7 +249,7 @@ The four `provider_*` columns are all nullable, so every existing (DNS-verified)
 
 Verification is a DNS TXT record: the owner publishes `_cerberus-challenge.<domain>  TXT  "cerberus-verify=<token>"`, and `POST /api/v1/domains/{id}/verify` looks it up (`core/verification.py`).
 
-Constraints: `(user_id, domain)` is unique, so a user cannot claim a domain twice. **Claims are not unique, proof is:** a partial unique index (`uq_domain_one_verified_owner`, `WHERE verification_status = 'verified'`) means anyone may *claim* any domain, but only one user can hold it *verified*. Whoever proves control first owns it, and a domain can move to someone else only after the first owner's status leaves `verified`. The index does not care *how* it was proved, so a DNS proof and a platform proof compete under the same rule.
+Constraints: `(user_id, domain)` is unique, so a user cannot claim a domain twice. **Claims are not unique, proof is:** a partial unique index (`uq_domain_one_verified_owner`, `WHERE verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')`, migration `0008`) means anyone may *claim* any domain, but only one user can hold it *verified*. Whoever proves control first owns it, and a domain can move to someone else only after the first owner's status leaves `verified`. The index does not care *how* it was proved among DNS, platform-account and testbed proofs, except for one deliberate carve-out: `testbed`/`lab` rows are **excluded** from the one-owner rule, so every account can independently verify and scan the same shared benchmark address (`testphp.vulnweb.com`, `127.0.0.1`) without racing each other for it.
 
 A target proved through a platform is *also* re-checked with that platform before each scan (see [API.md §4.5](API.md#45-scan-authorization-is-unchanged)); if the platform no longer vouches for it, `verification_status` becomes `failed` and `verified_at` is cleared. A disconnect sets the targets that connection verified back to `pending`.
 
@@ -301,6 +302,7 @@ One row per pipeline run. Status tracks progress through discovery → ingestion
 | `status` | text | `pending` \| `discovering` \| `enriching` \| `scoring` \| `completed` \| `failed` |
 | `error` | text, nullable | failure reason when `status` is `failed` |
 | `warnings` | json | non-fatal problems: a scanner that failed to run, a stale enrichment cache. A scan can complete and still have been degraded |
+| `progress` | json, default `{}` | real per-stage progress (`core/pipeline.py`'s `SCAN_STAGES`), written as each stage actually finishes; `{}` until the pipeline starts. A stage missing from `progress["completed"]` once the scan is done simply never ran - never invented |
 | `started_at` | timestamptz | |
 | `completed_at` | timestamptz, nullable | |
 
@@ -435,7 +437,9 @@ apart.
 
 Revisions so far: `0001` baseline, `0002` unbound tool-supplied text columns, `0003` scan warnings and
 criticality source, `0004` users and domains, `0005` auth sessions and per-user asset identity,
-`0006` user profile picture and sign-in method, `0007` connected providers and provider-verified targets.
+`0006` user profile picture and sign-in method, `0007` connected providers and provider-verified targets,
+`0008` multi-user testbeds and Docker labs, `0009` an admin flag on `users`, `0010` real per-stage scan
+progress.
 
 `0004` is purely additive: `tenant_id` stays, and the new `user_id`/`domain_id` columns on `scans` and
 `assets` are nullable, so existing rows keep working with no owner. Nothing is invented for them: a
@@ -452,6 +456,29 @@ have neither until their next sign-in.
 `0007` adds `connected_providers` and `oauth_states`, and four nullable `provider_*` columns on
 `domains`. It is purely additive and touches nothing the scanner reads. Downgrading it drops them (and
 therefore any stored connections: people reconnect), and every domain keeps its DNS verification.
+
+`0008` rebuilds `uq_domain_one_verified_owner` to exclude `verification_method IN ('testbed', 'lab')`
+(§3, `domains`), so the Test Labs feature's shared public benchmarks and Docker lab addresses can be
+verified by more than one account at once, instead of the first user to add one locking everyone else
+out. It touches no column, only the index's `WHERE` clause, and downgrading restores the original
+one-owner-regardless-of-method rule (which would then refuse a second account's testbed row on the next
+write, not retroactively delete it).
+
+`0010` adds one nullable-free column, `scans.progress json not null default '{}'`. Every existing scan
+row defaults to `{}` (no progress to show, never a fabricated one), and nothing reads `scans.status`
+any differently - `progress` is additive detail, not a replacement for it. Downgrading drops the
+column; re-upgrading restores it as `{}` for every row, since nothing records what a scan's progress
+was before this column existed. Run up → down → up on copies of both real databases (14 scans in one,
+1 in the pre-accounts `lab.db`) and on PostgreSQL 16 with a seeded scan row; every row's count was
+unchanged at each step and the schema matched the models afterwards.
+
+`0009` adds one nullable-free column, `users.is_admin boolean not null default false`. Every existing
+account defaults to `false`: the column creates no admin, only the ability to become one by an operator
+later running `scripts/grant_admin.py`. Downgrading drops the column; re-upgrading restores it as
+`false` for everyone, since nothing records who held it before. Run up → down → up on copies of both of
+the project's real databases — one holding 7 real users, and the pre-accounts `lab.db`, which has no
+`users` table at all and correctly gets none invented by this migration — and on PostgreSQL 16 with two
+seeded users, both of whom came back `is_admin = false`, not `NULL`.
 
 `0006` and `0007` together (`0005 → 0007 → 0005 → 0007`) were run on SQLite (copies of the project's
 real development databases: one adopted at `0002`, one at `0005` holding 4 users and a domain) and on

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from api import auth, domains
+from api import admin, auth, domains
 from api import providers as provider_routes
 from api.deps import ApiError, current_user, get_session
 from api.schemas import (
@@ -23,8 +23,11 @@ from api.schemas import (
     CriticalityUpdate,
     EnrichmentStatus,
     FindingDetail,
+    FindingDetectionOut,
+    FindingExplanationOut,
     FindingList,
     FindingOut,
+    FindingSeverityOut,
     FindingsOverview,
     FindingUpdate,
     ObservationList,
@@ -32,6 +35,7 @@ from api.schemas import (
     Overview,
     ScanCreated,
     ScanList,
+    ScanProgress,
     ScanRequest,
     ScanStatus,
     ScanSummary,
@@ -64,6 +68,7 @@ from core.pipeline import (
 from core.profiles import ProfileViolation, get_profile
 from core.provider_service import ProviderServiceError, recheck_platform_target
 from scoring.engine import RISK_BANDS, score_pending_findings
+from scoring.explain import explain
 
 log = logging.getLogger(__name__)
 
@@ -140,11 +145,18 @@ async def _api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
 app.include_router(auth.router)
 app.include_router(domains.router)
 app.include_router(provider_routes.router)
+app.include_router(admin.router)
 
 
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+def _scan_progress(scan: Scan) -> ScanProgress | None:
+    """None for a scan with no progress yet - a scan that predates this column, or one whose
+    pipeline has not reached its first stage-write. Never a fabricated empty progress object."""
+    return ScanProgress(**scan.progress) if scan.progress else None
 
 
 def _optional_cipher():
@@ -246,6 +258,7 @@ def list_scans(
                 error=s.error,
                 warnings=list(s.warnings or []),
                 observation_count=counts.get(s.id, 0),
+                progress=_scan_progress(s),
             )
             for s in scans
         ],
@@ -268,6 +281,7 @@ def get_scan(
         completed_at=scan.completed_at,
         error=scan.error,
         warnings=list(scan.warnings or []),
+        progress=_scan_progress(scan),
     )
 
 
@@ -472,6 +486,7 @@ def _load_finding(session: Session, finding_id: str, user_id: str):
 
 def _detail(row) -> FindingDetail:
     f, c, a, crit = row
+    explanation = explain(f, c, a, crit)
     return FindingDetail(
         id=f.id,
         asset=AssetRef(id=a.id, hostname=a.hostname, port=a.port),
@@ -492,6 +507,28 @@ def _detail(row) -> FindingDetail:
         detected_by_tool=f.detected_by_tool,
         evidence=f.evidence,
         detected_at=f.detected_at,
+        explanation=FindingExplanationOut(
+            what_we_found=explanation.what_we_found,
+            what_is_the_problem=explanation.what_is_the_problem,
+            why_it_matters=explanation.why_it_matters,
+            how_it_was_detected=FindingDetectionOut(
+                host=explanation.how_it_was_detected.host,
+                port=explanation.how_it_was_detected.port,
+                technology=explanation.how_it_was_detected.technology,
+                detection_method=explanation.how_it_was_detected.detection_method,
+                detected_by_tool=explanation.how_it_was_detected.detected_by_tool,
+            ),
+            how_serious=FindingSeverityOut(
+                risk_score=explanation.how_serious.risk_score,
+                cvss_score=explanation.how_serious.cvss_score,
+                epss_score=explanation.how_serious.epss_score,
+                kev_listed=explanation.how_serious.kev_listed,
+                asset_criticality=explanation.how_serious.asset_criticality,
+            ),
+            why_this_priority=explanation.why_this_priority,
+            what_to_do=explanation.what_to_do,
+            how_to_verify=explanation.how_to_verify,
+        ),
     )
 
 

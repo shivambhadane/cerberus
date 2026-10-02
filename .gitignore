@@ -50,3 +50,6 @@ landing/screenshot_*.png
 
 # timestamped .env backups (contain secrets)
 .env.bak-*
+
+# Obsidian vault config, if docs/ is opened as a vault (local editor state, not project content)
+.obsidian/

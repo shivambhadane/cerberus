@@ -35,6 +35,7 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | [Code map](docs/code.md) | Every directory and file: what it does and where to change things |
 | [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
 | [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, setting up Vercel / Netlify / Cloudflare verification, and what was and wasn't verified |
+| [V1 completion report](docs/V1_COMPLETION_REPORT.md) | What was built against the V1 scope, how each claim was verified, and the two acceptance criteria that were not met |
 | [Project report](docs/PROJECT_REPORT.md) | The whole project in presentation order: problem, solution, architecture, stack, methodology, work done, results, limitations, conclusion, future scope, and a 16-slide outline |
 | [Demo script](docs/DEMO.md) | A 10-minute walkthrough, including where the tool is honest about its limits |
 | [Validation](docs/VALIDATION.md) | What a real end-to-end run against the lab produced, including the bugs it found |
@@ -201,6 +202,7 @@ it shows you, and scan it.
 | `./run.sh` | set up if needed, then start the API and dashboard |
 | `./run.sh stop` / `status` / `logs` | stop, inspect, follow |
 | `./run.sh test` | tests, lint and the dashboard build |
+| `./run.sh https` | serve over `https://localhost` instead (some deployment providers require it) |
 | `./run.sh scan <domain>` | scan from the command line |
 | `./run.sh lab up` / `lab scan` / `lab down` | the local vulnerable target |
 | `./run.sh help` | everything else |
@@ -280,12 +282,13 @@ origin: `CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (already set 
 
 ### Proving you own a target
 
-A scan needs a **verified** target. There are two ways to verify one, and the first is always available:
+A scan needs a **verified** target. There are three ways to verify one, and the first is always available:
 
 | You have | Verify it with | Notes |
 |---|---|---|
 | A custom domain (`example.com`) | **A DNS TXT record** the dashboard gives you | Works for any domain. Unchanged. |
 | An app on the platform's free address (`*.vercel.app`, `*.netlify.app`, `*.pages.dev`) | **Connecting your Vercel, Netlify or Cloudflare account** (Targets → *Add a deployment*) | You sign in on the platform, pick a project, and Cerberus asks the platform whether the account controls it. |
+| Nothing of your own yet | **Test Labs** (one click, no proof needed) | A fixed, built-in list of sanctioned public benchmarks and Docker labs. See [below](#test-labs). |
 
 You cannot add DNS records to `something.vercel.app`, which is what the second route is for. It is
 **optional and off until the operator sets it up**: it needs an OAuth app on each platform and an
@@ -303,10 +306,22 @@ set up on this server" and nothing else changes.
 - **Local HTTPS:** some platforms refuse an `http://localhost` redirect URL. `./run.sh https` serves everything over `https://localhost` with a certificate that can only vouch for localhost ([details](docs/DEPLOYMENT.md#72-redirect-callback-urls)).
 - **Disconnect** (Targets, or the Profile page's list) deletes the stored tokens and returns the targets that
   connection verified to "not verified".
-- **Honest limits:** it has been tested against fakes of each platform's documented responses, **not against a
-  live account**; Netlify's token endpoint is undocumented and its tokens have no scopes; Cloudflare's Pages
-  scope name is unpublished; a Vercel integration must be public before other people can use it. Details:
-  [docs/API.md §4](docs/API.md#4-deployment-providers).
+- **Live verification:** Netlify (OAuth), Cloudflare Pages (OAuth), and Vercel (personal access token) have each verified real targets live. Netlify's token endpoint is undocumented and its tokens have no scopes; Cloudflare Pages uses `page.read` and `pages.metadata_read` scopes; a Vercel *integration* (as opposed to its personal token path) must be public before other people can install it multi-tenant. Details: [docs/API.md §4](docs/API.md#4-deployment-providers).
+
+### Test Labs
+
+No domain, no deployment, nothing to prove yet? **Targets → Test Labs** lists sanctioned public benchmark
+sites (Acunetix TestASP/TestPHP, IBM Altoro Mutual) and local Docker labs (the built-in Apache CVE lab, OWASP
+Juice Shop, DVWA) that add as an **already-verified** target in one click — no DNS record, no platform
+account. It is how this README's own validation run and demo script were produced.
+
+**The honest caveat:** the Docker labs all resolve to `127.0.0.1`, and that one scan is granted exactly the
+loopback address — never the RFC1918 ranges or the cloud metadata address a blanket allowance would also
+open (`core/scope.py`'s `allow_loopback_only`). Any signed-in user can still reach this server's own
+loopback interface, which is fine when "any signed-in user" is only you, and worth gating if you ever
+deploy Cerberus for more than yourself — see
+[DEPLOYMENT.md §5](docs/DEPLOYMENT.md#5-scanning-from-the-deployed-api). The screen also has not had its
+accessibility pass yet ([known gaps](frontend/README.md#known-gaps)).
 
 ### Viewing the landing page
 

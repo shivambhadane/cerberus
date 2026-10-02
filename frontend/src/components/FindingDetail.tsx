@@ -63,18 +63,22 @@ export function FindingDetail({
     if (event.key === "Escape") onClose();
   };
 
+  const explanation = detail?.explanation;
+
   return (
     <aside className="panel detail" id="finding-detail" aria-label="Finding detail" onKeyDown={onKeyDown}>
       {error && <ErrorBanner error={error} />}
       {!detail && !error && <SkeletonRows rows={6} />}
-      {detail && (
+      {detail && explanation && (
         <div className="stack">
           <div className="cluster" style={{ justifyContent: "space-between" }}>
-            <h2 ref={heading} tabIndex={-1} className="mono">{detail.cve_id}</h2>
+            {/* The plain-language headline, not the CVE id, is what a developer sees first. */}
+            <h2 ref={heading} tabIndex={-1}>{explanation.what_we_found}</h2>
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
               Close<span className="sr-only"> finding detail</span>
             </button>
           </div>
+          <p className="muted mono">{detail.cve_id}</p>
 
           <div className="cluster">
             <RiskScore score={detail.risk_score} />
@@ -83,20 +87,54 @@ export function FindingDetail({
             <StatusBadge status={detail.status} />
           </div>
 
-          <dl className="kv">
-            <dt>Asset</dt>
-            <dd>{detail.asset.hostname}:{detail.asset.port}</dd>
-            <dt>CVSS</dt>
-            <dd>{fixed1(detail.cvss_score)}</dd>
-            <dt>EPSS</dt>
-            <dd>{percent(detail.epss_score)}</dd>
-            <dt>KEV added</dt>
-            <dd>{detail.kev_date_added ?? "Not listed"}</dd>
-            <dt>Found by</dt>
-            <dd>{detail.detected_by_tool ?? "version match"}</dd>
-            <dt>Detected</dt>
-            <dd>{formatDate(detail.detected_at)}</dd>
-          </dl>
+          <section aria-labelledby={`${statusId}-problem`}>
+            <h3 id={`${statusId}-problem`} className="field-label">What is the problem?</h3>
+            <p className="reasoning-text">{explanation.what_is_the_problem}</p>
+          </section>
+
+          <section aria-labelledby={`${statusId}-matters`}>
+            <h3 id={`${statusId}-matters`} className="field-label">Why does it matter?</h3>
+            <p className="reasoning-text">{explanation.why_it_matters}</p>
+          </section>
+
+          <section aria-labelledby={`${statusId}-detected`}>
+            <h3 id={`${statusId}-detected`} className="field-label">How was it detected?</h3>
+            <dl className="kv">
+              <dt>Host</dt>
+              <dd>{explanation.how_it_was_detected.host}:{explanation.how_it_was_detected.port}</dd>
+              <dt>Technology</dt>
+              <dd>{explanation.how_it_was_detected.technology ?? "Not identified"}</dd>
+              <dt>Detection</dt>
+              <dd><DetectionBadge method={explanation.how_it_was_detected.detection_method} /></dd>
+              <dt>Found by</dt>
+              <dd>{explanation.how_it_was_detected.detected_by_tool ?? "version match"}</dd>
+              <dt>Detected</dt>
+              <dd>{formatDate(detail.detected_at)}</dd>
+            </dl>
+          </section>
+
+          <section aria-labelledby={`${statusId}-serious`}>
+            <h3 id={`${statusId}-serious`} className="field-label">How serious is it?</h3>
+            <dl className="kv">
+              <dt>Cerberus risk</dt>
+              <dd>{fixed1(explanation.how_serious.risk_score)}</dd>
+              <dt>CVSS</dt>
+              <dd>{fixed1(explanation.how_serious.cvss_score)}</dd>
+              <dt>EPSS</dt>
+              <dd>{percent(explanation.how_serious.epss_score)}</dd>
+              <dt>KEV</dt>
+              <dd>{explanation.how_serious.kev_listed ? `Listed${detail.kev_date_added ? ` (${detail.kev_date_added})` : ""}` : "Not listed"}</dd>
+              <dt>Asset criticality</dt>
+              <dd>{explanation.how_serious.asset_criticality ?? "Not set"}</dd>
+            </dl>
+          </section>
+
+          {explanation.why_this_priority && (
+            <section aria-labelledby={`${statusId}-priority`}>
+              <h3 id={`${statusId}-priority`} className="field-label">Why this priority?</h3>
+              <p className="reasoning-text">{explanation.why_this_priority}</p>
+            </section>
+          )}
 
           <section aria-labelledby={`${statusId}-crit`}>
             <h3 id={`${statusId}-crit`} className="field-label" style={{ marginBottom: "var(--space-2)" }}>Asset criticality</h3>
@@ -117,15 +155,19 @@ export function FindingDetail({
             />
           </section>
 
-          {detail.reasoning && (
-            <p className="reasoning-text">
-              <strong>Why this rank. </strong>
-              {detail.reasoning}
-            </p>
-          )}
+          <section aria-labelledby={`${statusId}-fix`}>
+            <h3 id={`${statusId}-fix`} className="field-label">What should I do?</h3>
+            <p className="reasoning-text">{explanation.what_to_do}</p>
+          </section>
+
+          <section aria-labelledby={`${statusId}-verify`}>
+            <h3 id={`${statusId}-verify`} className="field-label">How do I verify the fix?</h3>
+            <p className="reasoning-text">{explanation.how_to_verify}</p>
+          </section>
+
           {detail.evidence && (
             <p className="reasoning-text">
-              <strong>How it was found. </strong>
+              <strong>Raw evidence. </strong>
               {detail.evidence}
             </p>
           )}
@@ -142,8 +184,6 @@ export function FindingDetail({
           <div role="status" aria-live="polite">
             {notice && <Banner tone="success">{notice}</Banner>}
           </div>
-
-          {detail.description && <p className="reasoning-text">{detail.description}</p>}
 
           <div className="detail-actions">
             <a className="btn btn-secondary btn-sm" href={toHash("evidence", { target: `${detail.asset.hostname}:${detail.asset.port}` })}>

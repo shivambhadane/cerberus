@@ -336,7 +336,7 @@ def test_me_needs_a_token(client):
 def test_me_reports_only_public_fields(client):
     body = client.get(f"{BASE}/me", headers=bearer(register(client))).json()
     assert set(body) == {"id", "email", "name", "email_verified", "created_at", "last_login_at",
-                         "picture_url", "auth_provider"}
+                         "picture_url", "auth_provider", "is_admin"}
     assert not {"password", "password_hash", "token"} & set(body)
 
 

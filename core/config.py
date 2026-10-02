@@ -23,6 +23,10 @@ def _load_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
+        # setdefault, so a real environment variable always beats the file. Note this puts
+        # EMPTY values in the environment too ("KEY=" is a set-but-blank variable), which is
+        # why every getter below treats blank as "not set" rather than passing a default to
+        # os.environ.get - a default only applies when the key is absent entirely.
         os.environ.setdefault(key.strip(), value.strip())
 
 
@@ -80,17 +84,17 @@ class Config:
 
     @property
     def api_secret_key(self) -> str:
-        return os.environ.get("API_SECRET_KEY", "change-me")
+        return os.environ.get("API_SECRET_KEY") or "change-me"
 
     @property
     def access_token_minutes(self) -> int:
         """How long an access token lives. Short, because it cannot be revoked; the refresh
         token (which can) mints the next one."""
-        return int(os.environ.get("ACCESS_TOKEN_MINUTES", "15"))
+        return int(os.environ.get("ACCESS_TOKEN_MINUTES") or "15")
 
     @property
     def refresh_token_days(self) -> int:
-        return int(os.environ.get("REFRESH_TOKEN_DAYS", "14"))
+        return int(os.environ.get("REFRESH_TOKEN_DAYS") or "14")
 
     @property
     def cookie_secure(self) -> bool:
@@ -111,12 +115,12 @@ class Config:
     def public_api_url(self) -> str:
         """The API's public base URL. OAuth redirect URIs are built from it and must match, exactly,
         what is registered with each provider."""
-        return os.environ.get("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
+        return (os.environ.get("PUBLIC_API_URL") or "http://localhost:8000").rstrip("/")
 
     @property
     def frontend_url(self) -> str:
         """Where the browser is sent after an OAuth callback."""
-        return os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+        return (os.environ.get("FRONTEND_URL") or "http://localhost:5173").rstrip("/")
 
     def provider_credentials(self, provider: str) -> tuple[str, str]:
         """(client id, client secret) for a provider, from the environment. Never sent to the browser."""
@@ -135,7 +139,7 @@ class Config:
 
     @property
     def cors_origins(self) -> list[str]:
-        raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+        raw = os.environ.get("CORS_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173"
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 

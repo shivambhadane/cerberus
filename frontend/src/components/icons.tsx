@@ -22,13 +22,40 @@ const PATHS = {
   eyeOff: "M9.88 9.88a3 3 0 1 0 4.24 4.24m-7.07-7.07 14.14 14.14M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61",
   flask: "M10 2v4.5L4.2 18A2 2 0 0 0 6 21h12a2 2 0 0 0 1.8-3L14 6.5V2h-4ZM8.5 2h7M7 15h10",
   terminal: "M4 17l6-6-6-6M12 19h8",
+  refresh: "M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8m0 0V3m0 5h5M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16m0 0v5m0-5h-5",
+  search: "m21 21-4.35-4.35M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
+  lock: "M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Zm-7 0V7a5 5 0 0 0-10 0v4",
+  info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-14v.01M12 11v6",
+  chevronDown: "m6 9 6 6 6-6",
+  chevronUp: "m18 15-6-6-6 6",
+  copy: "M8 4v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7.242a2 2 0 0 0-.602-1.43L16.083 2.57A2 2 0 0 0 14.685 2H10a2 2 0 0 0-2 2Zm-4 4h2v12a2 2 0 0 0 2 2h8v2H6a2 2 0 0 1-2-2V8Z",
 } as const;
 
 export type IconName = keyof typeof PATHS;
 
-export function Icon({ name }: { name: IconName }) {
+export function Icon({
+  name,
+  size = 16,
+  className = "",
+}: {
+  name: IconName;
+  size?: number;
+  className?: string;
+}) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg
+      width={size}
+      height={size}
+      className={`icon ${className}`.trim()}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path d={PATHS[name]} />
     </svg>
   );

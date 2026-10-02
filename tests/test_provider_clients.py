@@ -303,7 +303,7 @@ def test_cloudflare_authorization_url_carries_pkce_scopes_and_state(cloudflare):
     ):
         assert part in url
     scope = url.split("scope=")[1].split("&")[0]
-    assert set(scope.split("+")) == {"pages.read", "account.read", "openid", "offline_access"}
+    assert set(scope.split("+")) == {"pages.read", "account.read", "offline_access"}
 
 
 def test_cloudflare_refuses_to_start_without_pkce(cloudflare):

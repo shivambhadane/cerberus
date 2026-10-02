@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
@@ -385,3 +387,75 @@ def test_the_provider_migrations_can_be_undone_and_redone(engine):
     migrate(engine)  # and forward again
     assert schema_differences(engine) == []
     assert "connected_providers" in inspect(engine).get_table_names()
+
+
+def test_the_admin_flag_is_additive_and_defaults_false(engine):
+    """0009 adds one column. An existing account must come back `is_admin = 0` (false), not NULL
+    and not invented as true."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(engine), "0008")
+    with engine.begin() as connection:
+        _seed_user_and_dns_domain(connection)
+
+    migrate(engine)
+    with engine.connect() as connection:
+        is_admin, email = connection.execute(
+            text("SELECT is_admin, email FROM users WHERE id = 'u1'")
+        ).one()
+    assert (is_admin, email) == (0, "u1@x.com")
+    assert schema_differences(engine) == []
+
+
+def test_the_admin_flag_migration_can_be_undone_and_redone(engine):
+    from alembic import command
+
+    migrate(engine)
+    command.downgrade(_alembic_config(engine), "0008")
+    assert "is_admin" not in {c["name"] for c in inspect(engine).get_columns("users")}
+
+    migrate(engine)
+    assert "is_admin" in {c["name"] for c in inspect(engine).get_columns("users")}
+    assert schema_differences(engine) == []
+
+
+def test_scan_progress_is_additive_and_defaults_to_empty(engine):
+    """0010 adds one column. A scan that finished before this column existed must come back with
+    an empty progress object - not NULL, and not a fabricated set of stages it never reported."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(engine), "0009")
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO tenants (id, name, created_at) VALUES ('t1', 'default', '2026-10-02')")
+        )
+        connection.execute(
+            text(
+                "INSERT INTO scans (id, tenant_id, target_domain, profile, status, warnings, "
+                "started_at) VALUES ('s1', 't1', 'example.com', 'safe', 'completed', '[]', "
+                "'2026-10-02')"
+            )
+        )
+
+    migrate(engine)
+
+    with engine.connect() as connection:
+        progress, status = connection.execute(
+            text("SELECT progress, status FROM scans WHERE id = 's1'")
+        ).one()
+    assert status == "completed"  # the old row is otherwise untouched
+    # SQLite hands back the raw server_default text; PostgreSQL decodes the JSON for us.
+    assert (json.loads(progress) if isinstance(progress, str) else progress) == {}
+    assert schema_differences(engine) == []
+
+
+def test_the_scan_progress_migration_can_be_undone_and_redone(engine):
+    from alembic import command
+
+    migrate(engine)
+    command.downgrade(_alembic_config(engine), "0009")
+    assert "progress" not in {c["name"] for c in inspect(engine).get_columns("scans")}
+
+    migrate(engine)
+    assert "progress" in {c["name"] for c in inspect(engine).get_columns("scans")}
+    assert schema_differences(engine) == []

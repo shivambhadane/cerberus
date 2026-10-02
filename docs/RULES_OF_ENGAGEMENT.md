@@ -18,6 +18,13 @@ See also: [Legal & Ethical Use](../README.md#legal--ethical-use) in the root REA
 ## 2. Scope boundaries
 
 - Scans are limited to the `target_domain` explicitly provided and its discovered subdomains. Cerberus does not pivot to out-of-scope domains, unrelated third-party infrastructure (e.g. shared CDNs, cloud provider control planes), or internal/private IP ranges discovered incidentally.
+- **Known exception:** the dashboard's Test Labs screen deliberately lets a signed-in user add the
+  built-in `127.0.0.1` Docker lab as a verified target. That scan is granted only the exact loopback
+  address, never the RFC1918 ranges or the cloud metadata address — `core/scope.py`'s
+  `allow_loopback_only`, narrower than a blanket private-address allowance (see
+  [DEPLOYMENT.md §5](DEPLOYMENT.md#5-scanning-from-the-deployed-api)). On a shared deployment this
+  still means any account can scan this server's loopback interface; it is accepted here because v1
+  targets single-operator use ([PRD §3](PRD.md#3-non-goals-v1)).
 - If a bug bounty or engagement scope document exists, its exclusions (specific hosts, IP ranges, or testing windows) take precedence over what Cerberus technically has permission to reach.
 - Cerberus is built for **external attack surface** only. It is not intended to scan internal/on-prem networks (see [PRD §3, Non-Goals](PRD.md#3-non-goals-v1)).
 

@@ -131,3 +131,13 @@ def current_user(
     if user is None or not user.is_active:
         raise ApiError(401, "unauthorized", "Sign in to continue.")
     return user
+
+
+def require_admin(user: User = Depends(current_user)) -> User:
+    """Gate the cross-tenant admin endpoints (api/admin.py). Still a real signed-in user — this adds
+    an authorization check on top of `current_user`, never a way around it. `404`, not `403`: a non-admin
+    probing `/api/v1/admin/*` sees the same "not found" any unauthenticated or wrong-tenant request gets
+    elsewhere in this API, so the existence of the admin surface is not itself something to discover."""
+    if not user.is_admin:
+        raise ApiError(404, "not_found", "Not found.")
+    return user

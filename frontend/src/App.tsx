@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { enrichmentStatus, logout, onSessionEnded, restoreSession } from "./api";
+import { AdminView } from "./components/AdminView";
 import { AssetsView } from "./components/AssetsView";
+import { AttackSurfaceView } from "./components/AttackSurfaceView";
 import { AuthGate } from "./components/AuthGate";
 import { Avatar, displayName } from "./components/Avatar";
 import { DomainsView } from "./components/DomainsView";
@@ -13,6 +15,7 @@ import { OverviewView } from "./components/OverviewView";
 import { ProfileView } from "./components/ProfileView";
 import { ScansView } from "./components/ScansView";
 import { TestLabsView } from "./components/TestLabsView";
+import { EmptyState } from "./components/ui";
 import { toHash, useRoute } from "./lib/router";
 import type { Tab } from "./lib/router";
 import type { SourceStatus, User } from "./types";
@@ -24,15 +27,20 @@ const NAV: Record<Tab, { label: string; icon: IconName }> = {
   scans: { label: "Scans", icon: "scans" },
   findings: { label: "Findings", icon: "findings" },
   assets: { label: "Assets", icon: "assets" },
+  surface: { label: "Attack Surface", icon: "eye" },
   evidence: { label: "Evidence", icon: "evidence" },
   profile: { label: "Profile", icon: "user" },
+  admin: { label: "Admin", icon: "shield" },
 };
 
 /** The sidebar: what you scan, then what the scans found. Profile lives in the account area instead. */
 const NAV_GROUPS: { label: string; tabs: Tab[] }[] = [
   { label: "Workspace", tabs: ["overview", "domains", "labs", "scans"] },
-  { label: "Results", tabs: ["findings", "assets", "evidence"] },
+  { label: "Results", tabs: ["findings", "assets", "surface", "evidence"] },
 ];
+// A separate group, appended only for an admin account: it is read-only cross-tenant visibility,
+// not part of a regular user's own workspace, so it does not belong in either group above.
+const ADMIN_GROUP: { label: string; tabs: Tab[] } = { label: "Admin", tabs: ["admin"] };
 
 type Auth =
   | { status: "loading" }
@@ -145,7 +153,7 @@ export default function App() {
         <aside className="sidebar" aria-label="Cerberus">
           <Brand />
           <nav aria-label="Primary" className="sidebar-nav">
-            {NAV_GROUPS.map((group) => (
+            {(auth.user.is_admin ? [...NAV_GROUPS, ADMIN_GROUP] : NAV_GROUPS).map((group) => (
               <div key={group.label} className="nav-group">
                 <p className="nav-heading">{group.label}</p>
                 <ul className="nav" role="list">
@@ -197,8 +205,12 @@ export default function App() {
               {tab === "scans" && <ScansView onScanFinished={refreshStatus} />}
               {tab === "findings" && <FindingsView />}
               {tab === "assets" && <AssetsView />}
+              {tab === "surface" && <AttackSurfaceView />}
               {tab === "evidence" && <ObservationsView />}
               {tab === "profile" && <ProfileView user={auth.user} onSignOut={() => void signOut()} />}
+              {tab === "admin" && (
+                auth.user.is_admin ? <AdminView /> : <EmptyState title="Not found">That page does not exist.</EmptyState>
+              )}
             </div>
           </main>
         </div>

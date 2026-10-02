@@ -82,6 +82,11 @@ class User(Base):
     # profile picture URL and how the person signed in ("google.com", "github.com", "password").
     picture_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     auth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Grants read-only visibility across every user's domains, scans and findings (api/admin.py). It
+    # grants nothing else: an admin's own scans are still authorised exactly like anyone else's, by a
+    # verified domain they own. There is no API that sets this column — only an operator with direct
+    # database access can (scripts/grant_admin.py), the same trust boundary as claim_legacy.py.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     domains: Mapped[list[Domain]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -99,8 +104,12 @@ class Domain(Base):
             "uq_domain_one_verified_owner",
             "domain",
             unique=True,
-            sqlite_where=text("verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"),
-            postgresql_where=text("verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"),
+            sqlite_where=text(
+                "verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"
+            ),
+            postgresql_where=text(
+                "verification_status = 'verified' AND verification_method NOT IN ('testbed', 'lab')"
+            ),
         ),
     )
 
@@ -225,6 +234,11 @@ class Scan(Base):
     # Non-fatal problems: a scanner that failed to run, a stale enrichment cache. A scan can
     # complete and still have been degraded; without this the only trace was CLI output.
     warnings: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    # Real per-stage progress (core/pipeline.py: SCAN_STAGES), updated as each stage actually
+    # completes. {} until the pipeline starts; a stage missing from progress["completed"] means
+    # it has not happened yet (or, once the scan is done, never ran for this profile) - never
+    # invented to make a progress bar look busier than the scan really is.
+    progress: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

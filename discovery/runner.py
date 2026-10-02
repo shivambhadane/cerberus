@@ -96,6 +96,7 @@ def run_discovery(
     profile: ScanProfile,
     enumerate_subdomains: bool = True,
     config: DiscoveryConfig | None = None,
+    on_stage: Callable[[str, dict], None] | None = None,
 ) -> DiscoveryResult:
     """Domain -> in-scope endpoints, with every observation attributed to its tool.
 
@@ -103,8 +104,18 @@ def run_discovery(
     active probing stops after passive enumeration and DNS. Otherwise it also governs the
     vulnerability-scanning stage, where adapters receive it directly rather than any
     arguments assembled here.
+
+    `on_stage(name, counts)`, if given, is called once a real stage boundary genuinely
+    completes - never on a guess, never on a timer. A stage this run never reaches (a
+    passive profile stops after DNS resolution) simply never calls back for it. See
+    `core.pipeline.SCAN_STAGES` for the names and core.pipeline.run_pipeline for how the
+    callback is turned into a persisted `scans.progress`.
     """
     import discovery.adapters  # noqa: F401  (registers the adapters)
+
+    def stage(name: str, **counts) -> None:
+        if on_stage is not None:
+            on_stage(name, counts)
 
     observations: list[Observation] = []
     errors: list[str] = []
@@ -114,6 +125,7 @@ def run_discovery(
             observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(scope), errors))
     else:
         log.info("subdomain enumeration disabled; using the apex domain only")
+    stage("asset_discovery", subdomains=len(observations))
 
     hosts = _hosts_from(observations, scope)
     if not hosts:
@@ -122,6 +134,7 @@ def run_discovery(
         ip = resolve(scope.domain)
         if ip and scope.permits_address(ip):
             hosts = [Endpoint(hostname=scope.domain, ip_address=ip)]
+    stage("dns_resolution", hosts_resolved=len(hosts))
     if not hosts:
         log.warning("no in-scope hosts resolved for %s", scope.domain)
         return DiscoveryResult(observations, [], errors)
@@ -129,7 +142,8 @@ def run_discovery(
     if not profile.runs_active_probes:
         # A passive profile promises certificate-transparency and DNS only. Everything past
         # this point sends packets to the target, so it must not run - the promise is
-        # otherwise just documentation.
+        # otherwise just documentation. The remaining stages are simply never reported: they
+        # did not run, so there is nothing honest to tick off.
         log.info("profile %s is passive: names resolved via DNS, target not contacted", profile.name)
         return DiscoveryResult(observations, [], errors)
 
@@ -138,6 +152,7 @@ def run_discovery(
         _configure(scanner, config)
         port_observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(hosts, scope), errors))
     observations.extend(port_observations)
+    stage("port_service_discovery", open_ports=len(port_observations))
 
     endpoints = _endpoints_from_ports(port_observations, scope)
     if not endpoints:
@@ -150,14 +165,23 @@ def run_discovery(
         o.target for o in port_observations if o.data.get("technology")
     }
     unidentified = [e for e in endpoints if str(e) not in identified]
+    technology_observations: list[Observation] = []
     for scanner in available(ObservationKind.TECHNOLOGY):
-        observations.extend(_run_adapter(scanner, lambda s=scanner: s.run(unidentified, scope), errors))
+        technology_observations.extend(
+            _run_adapter(scanner, lambda s=scanner: s.run(unidentified, scope), errors)
+        )
+    observations.extend(technology_observations)
+    identified_count = len(identified) + sum(1 for o in technology_observations if o.data.get("technology"))
+    stage("http_discovery", technologies=identified_count)
 
     if profile.runs_active_probes:
+        vulnerability_observations: list[Observation] = []
         for scanner in available(ObservationKind.VULNERABILITY):
-            observations.extend(
+            vulnerability_observations.extend(
                 _run_adapter(scanner, lambda s=scanner: s.run(endpoints, scope, profile), errors)
             )
+        observations.extend(vulnerability_observations)
+        stage("vulnerability_scan", detections=len(vulnerability_observations))
     else:
         log.info("profile %s permits no active probing; skipping detection", profile.name)
 
