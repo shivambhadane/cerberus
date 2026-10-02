@@ -47,3 +47,6 @@ nuclei-templates/
 # Temporary screenshots and archives
 landing/screenshot_*.png
 *.zip
+
+# timestamped .env backups (contain secrets)
+.env.bak-*

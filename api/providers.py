@@ -52,7 +52,7 @@ _STATUS = {
     "connection_expired": 409, "provider_unavailable": 503, "ownership_not_proven": 403,
     "not_a_platform_hostname": 400, "invalid_domain": 400, "domain_already_verified": 409,
     "not_found": 404, "ownership_lost": 403, "provider_error": 502,
-    "invalid_token": 400, "not_supported": 400,
+    "invalid_token": 400, "not_supported": 400, "invalid_team_id": 400,
 }
 
 

@@ -35,6 +35,7 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | [Code map](docs/code.md) | Every directory and file: what it does and where to change things |
 | [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
 | [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, setting up Vercel / Netlify / Cloudflare verification, and what was and wasn't verified |
+| [Project report](docs/PROJECT_REPORT.md) | The whole project in presentation order: problem, solution, architecture, stack, methodology, work done, results, limitations, conclusion, future scope, and a 16-slide outline |
 | [Demo script](docs/DEMO.md) | A 10-minute walkthrough, including where the tool is honest about its limits |
 | [Validation](docs/VALIDATION.md) | What a real end-to-end run against the lab produced, including the bugs it found |
 | [Test lab](lab/README.md) | The pinned, intentionally vulnerable Docker targets used for Level 1 validation |

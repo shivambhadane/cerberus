@@ -38,7 +38,7 @@ from providers.base import (
 API = "https://api.vercel.com"
 TOKEN_URL = f"{API}/v2/oauth/access_token"
 INSTALL_URL = "https://vercel.com/integrations/{slug}/new"
-_TEAM_ID = re.compile(r"^team_[A-Za-z0-9]{3,64}$")
+_TEAM_ID = re.compile(r"^team_[A-Za-z0-9_-]{3,64}$")
 MAX_PROJECTS = 50  # domains are one call per project, so a listing is bounded
 
 
@@ -61,7 +61,9 @@ class VercelProvider(DeploymentProvider):
         team = (options.get("team_id") or "").strip() or None
         if team is not None and not _TEAM_ID.match(team):
             raise ProviderError(
-                "invalid_identifier", "A Vercel team ID looks like team_ followed by letters and digits."
+                "bad_team_id",
+                "That is not a Vercel team ID. It starts with `team_` (Team Settings -> General), and is not "
+                "the team's name or the slug from the address bar. Leave it empty for a personal account.",
             )
         extra = {"method": "token", "team_id": team}
         return ProviderTokens(access_token=token, scopes="access-token", extra=extra)

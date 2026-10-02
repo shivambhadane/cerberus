@@ -146,10 +146,29 @@ def test_a_team_token_sends_the_team_and_names_the_connection_after_it(world):
     assert all((c.params or {}).get("teamId") == "team_erp" for c in world["http"].calls_to("/v2/user"))
 
 
-@pytest.mark.parametrize("team", ["erp", "team_", "team_../../user", "team_x?teamId=other", "user_123"])
+@pytest.mark.parametrize(
+    "team", ["erp", "team_", "team_../../user", "team_x?teamId=other", "user_123", "cozyattacker-projects"]
+)
 def test_a_malformed_team_id_is_refused_before_any_request(world, team):
-    error(paste(browser(world["alice"]), team_id=team), "invalid_token")
+    """A typo in the team field is its own error: it must not read as "the token was rejected", and it must
+    not spend one of the ten wrong-token attempts."""
+    message = error(paste(browser(world["alice"]), team_id=team), "invalid_team_id")
+    assert "team_" in message and "did not accept" not in message
     assert world["http"].calls == [] and rows(world["session"]) == []
+
+
+def test_a_bad_team_id_does_not_use_up_the_wrong_token_attempts(world):
+    client = browser(world["alice"])
+    for _ in range(12):
+        error(paste(client, team_id="not-a-team"), "invalid_team_id")
+    assert paste(client).status_code == 200  # still allowed through
+
+
+def test_a_real_looking_team_id_with_dashes_is_accepted(world):
+    """Vercel ids are opaque; the check must not be narrower than the ids Vercel actually issues."""
+    tid = "team_LLHUOMOo-Dlq_Op8wPE4k"
+    world["http"].route("GET", f"https://api.vercel.com/v2/teams/{tid}", (200, {"id": tid, "name": "T"}))
+    assert paste(browser(world["alice"]), team_id=tid).status_code == 200
 
 
 # --- tokens that are wrong ---------------------------------------------------------------------------

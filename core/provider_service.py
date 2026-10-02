@@ -138,11 +138,13 @@ def connect_with_token(
         tokens = provider.tokens_from_pasted(token, options)
         account = provider.get_account(tokens)
     except ProviderError as exc:
+        if exc.code == "bad_team_id":
+            raise ProviderServiceError("invalid_team_id", exc.message) from exc
         if exc.code in ("unauthorized", "forbidden", "not_found", "invalid_identifier"):
             raise ProviderServiceError(
                 "invalid_token",
-                f"{provider.label} did not accept that token. Check that it is current and, if it is "
-                "limited to a team, that the team ID is right.",
+                f"{provider.label} did not accept that token. Check that it is current, that you copied all "
+                "of it, and that it has not expired.",
             ) from exc
         raise _map_provider_error(exc, provider.label) from exc
     return _store_connection(session, user, provider, cipher, tokens, account, now)
