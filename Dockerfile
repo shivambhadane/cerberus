@@ -35,6 +35,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=cerberus:cerberus . .
+RUN chown -R cerberus:cerberus /app
 USER cerberus
 
 # Templates are baked in at build time and auto-update is disabled at scan time, so an image
