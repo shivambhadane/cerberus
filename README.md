@@ -34,7 +34,7 @@ Three heads, one job: see everything, know what's dangerous, tell you what to fi
 | [Rules of Engagement](docs/RULES_OF_ENGAGEMENT.md) | What Cerberus is allowed to scan, and how |
 | [Code map](docs/code.md) | Every directory and file: what it does and where to change things |
 | [Roadmap](docs/ROADMAP.md) | What's built vs. planned, by phase, with exit criteria |
-| [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, setting up Vercel / Netlify / Cloudflare verification, and what was and wasn't verified |
+| [Deployment](docs/DEPLOYMENT.md) | Running the API + Postgres in Docker Compose, [Railway + Cloudflare Pages deployment](docs/DEPLOY_RAILWAY_CLOUDFLARE.md), setting up Vercel / Netlify / Cloudflare verification, and what was and wasn't verified |
 | [V1 completion report](docs/V1_COMPLETION_REPORT.md) | What was built against the V1 scope, how each claim was verified, and the two acceptance criteria that were not met |
 | [Project report](docs/PROJECT_REPORT.md) | The whole project in presentation order: problem, solution, architecture, stack, methodology, work done, results, limitations, conclusion, future scope, and a 16-slide outline |
 | [Demo script](docs/DEMO.md) | A 10-minute walkthrough, including where the tool is honest about its limits |

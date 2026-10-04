@@ -6,6 +6,9 @@ How to run Cerberus as a service: the API plus PostgreSQL in Docker Compose, wit
 Everything marked **verified** below was run against a real Postgres 16 stack while writing this;
 everything under [Not verified](#not-verified) was not. Read that section before relying on it.
 
+> [!TIP]
+> **Railway + Cloudflare Pages Deployment**: For running the backend API and managed PostgreSQL on Railway paired with Cloudflare Pages for the frontend dashboard, see [DEPLOY_RAILWAY_CLOUDFLARE.md](DEPLOY_RAILWAY_CLOUDFLARE.md).
+
 ## What you get
 
 | Service | Image | Notes |

@@ -76,7 +76,10 @@ class Config:
 
     @property
     def database_url(self) -> str:
-        return os.environ.get("DATABASE_URL") or f"sqlite:///{ROOT / 'cerberus.db'}"
+        url = os.environ.get("DATABASE_URL") or f"sqlite:///{ROOT / 'cerberus.db'}"
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        return url
 
     @property
     def nvd_api_key(self) -> str | None:

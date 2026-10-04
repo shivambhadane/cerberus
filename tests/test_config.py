@@ -53,3 +53,13 @@ def test_a_blank_provider_credential_is_still_blank_not_a_default(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_CLIENT_ID", "")
     monkeypatch.setenv("CLOUDFLARE_CLIENT_SECRET", "")
     assert load_config().provider_credentials("cloudflare") == ("", "")
+
+
+def test_database_url_normalizes_postgres_scheme_for_sqlalchemy(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:pass@host:5432/db")
+    assert load_config().database_url == "postgresql://user:pass@host:5432/db"
+
+
+def test_database_url_preserves_postgresql_scheme(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host:5432/db")
+    assert load_config().database_url == "postgresql://user:pass@host:5432/db"
