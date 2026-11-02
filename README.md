@@ -1,10 +1,44 @@
-# Cerberus
+<div align="center">
 
-**Continuous Attack Surface & Exploitability Intelligence**
+<a href="https://cerberus-fsr.pages.dev/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="landing/assets/cerberus-logo-white.svg">
+    <img alt="Cerberus" src="landing/assets/cerberus-logo-black.svg" width="300">
+  </picture>
+</a>
+
+### Continuous Attack Surface & Exploitability Intelligence
+
+Find what you expose to the internet, match it against real-world exploit data,<br>
+and fix what attackers are actually going after first.
+
+**[🌐 Website](https://cerberus-fsr.pages.dev/)** &nbsp;·&nbsp;
+**[🖥️ Live Dashboard](https://cerberus-fsr.pages.dev/platform/)** &nbsp;·&nbsp;
+**[📖 Docs](#documentation)** &nbsp;·&nbsp;
+**[🚀 Quick Start](#quick-start)** &nbsp;·&nbsp;
+**[🗺️ Roadmap](docs/ROADMAP.md)**
+
+[![Live](https://img.shields.io/badge/live-cerberus--fsr.pages.dev-F97316?style=flat-square&logo=cloudflarepages&logoColor=white)](https://cerberus-fsr.pages.dev/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](api/)
+[![React 18 + TypeScript](https://img.shields.io/badge/React_18-TypeScript-61DAFB?style=flat-square&logo=react&logoColor=black)](frontend/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)](docs/DATABASE_SCHEMA.md)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](docker-compose.yml)
+
+</div>
+
+---
 
 Cerberus discovers everything an organization exposes to the internet, correlates it against real-world vulnerability, exploit, and threat-intelligence data, and tells you which weaknesses attackers are actually most likely to exploit — not just which ones have the scariest score.
 
-Three heads, one job: see everything, know what's dangerous, tell you what to fix first.
+> **Three heads, one job:** see everything, know what's dangerous, tell you what to fix first.
+
+| 🔭 **See everything** | ☠️ **Know what's dangerous** | 🎯 **Fix what matters first** |
+|---|---|---|
+| Subdomain, port and service discovery (crt.sh, subfinder, nmap, HTTP probing) | Correlates with NVD, CISA KEV and EPSS, plus safe nuclei detection | One explainable risk score per finding: exploited-in-the-wild beats a scary CVSS |
+
+**Try it:** open the [live dashboard](https://cerberus-fsr.pages.dev/platform/), sign in, add a domain you own (or a sanctioned test lab), and run a scan.
 
 ## Table of Contents
 - [Documentation](#documentation)
@@ -145,7 +179,7 @@ Each stage takes a clearly-typed input and produces a clearly-typed output, so t
 | Database | PostgreSQL, or SQLite for zero-setup local runs (SQLAlchemy 2.x); schema managed by Alembic |
 | Scoring | Python module, importable and independently deployable |
 | Frontend | React 18 + TypeScript, built with Vite |
-| Deployment | Docker Compose (Postgres + API) |
+| Deployment | Docker Compose (Postgres + API); hosted on Railway (API) and Cloudflare Pages ([cerberus-fsr.pages.dev](https://cerberus-fsr.pages.dev/)) |
 
 **Planned (see [Roadmap](docs/ROADMAP.md)):** Redis Streams then Kafka for the async
 worker queue, Neo4j for blast-radius analysis, Kubernetes for production deployment.
